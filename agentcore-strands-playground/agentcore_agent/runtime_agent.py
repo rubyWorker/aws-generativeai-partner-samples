@@ -397,6 +397,129 @@ def invoke_agent(payload, **kwargs) -> str:
             except Exception as mem_error:
                 logger.debug(f"Could not retrieve memories: {mem_error}")
 
+        # ===== DIAGNOSTIC LOGGING: Inspect conversation state before invocation =====
+        logger.info("=== PRE-INVOCATION CONVERSATION STATE DIAGNOSTIC ===")
+        
+        try:
+            # Access the session manager's conversation history
+            if hasattr(agent, 'session_manager') and hasattr(agent.session_manager, 'conversation'):
+                conversation = agent.session_manager.conversation
+                logger.info(f"Conversation object type: {type(conversation)}")
+                logger.info(f"Conversation length: {len(conversation) if hasattr(conversation, '__len__') else 'N/A'}")
+                
+                # Log full conversation structure
+                if hasattr(conversation, 'messages'):
+                    messages = conversation.messages
+                    logger.info(f"Total messages in conversation: {len(messages)}")
+                    
+                    # Dump full conversation history for debugging
+                    logger.info("=== FULL CONVERSATION HISTORY ===")
+                    for idx, msg in enumerate(messages):
+                        logger.info(f"Message {idx}:")
+                        logger.info(f"  Role: {msg.get('role', 'UNKNOWN')}")
+                        
+                        content = msg.get('content', [])
+                        if isinstance(content, list):
+                            logger.info(f"  Content blocks: {len(content)}")
+                            for block_idx, block in enumerate(content):
+                                if isinstance(block, dict):
+                                    block_type = list(block.keys())[0] if block else 'empty'
+                                    logger.info(f"    Block {block_idx} type: {block_type}")
+                                    
+                                    # Log toolUse blocks in detail
+                                    if 'toolUse' in block:
+                                        tool_use = block['toolUse']
+                                        logger.info(f"      toolUseId: {tool_use.get('toolUseId', 'N/A')}")
+                                        logger.info(f"      name: {tool_use.get('name', 'N/A')}")
+                                    
+                                    # Log toolResult blocks in detail
+                                    elif 'toolResult' in block:
+                                        tool_result = block['toolResult']
+                                        logger.info(f"      toolUseId: {tool_result.get('toolUseId', 'N/A')}")
+                                        logger.info(f"      status: {tool_result.get('status', 'N/A')}")
+                                    
+                                    # Log text blocks
+                                    elif 'text' in block:
+                                        text_preview = block['text'][:100] if len(block['text']) > 100 else block['text']
+                                        logger.info(f"      text: {text_preview}...")
+                                else:
+                                    logger.info(f"    Block {block_idx}: {type(block)}")
+                        else:
+                            logger.info(f"  Content: {str(content)[:200]}")
+                    
+                    logger.info("=== END CONVERSATION HISTORY ===")
+                    
+                    # Validate conversation state
+                    logger.info("=== CONVERSATION VALIDATION ===")
+                    
+                    # Check 1: Conversation must start with user message
+                    if messages and len(messages) > 0:
+                        first_message = messages[0]
+                        first_role = first_message.get('role', 'UNKNOWN')
+                        logger.info(f"First message role: {first_role}")
+                        
+                        if first_role != 'user':
+                            logger.warning(f"INVALID STATE: Conversation does not start with 'user' message (starts with '{first_role}')")
+                            logger.warning("This will cause 'A conversation must start with a user message' error")
+                            logger.warning("Clearing conversation to reset state...")
+                            
+                            # Clear the conversation
+                            conversation.messages = []
+                            logger.info("Conversation cleared successfully")
+                        else:
+                            logger.info("✓ Conversation starts with user message")
+                    
+                    # Check 2: Look for orphaned toolUse blocks (toolUse without matching toolResult)
+                    tool_use_ids = set()
+                    tool_result_ids = set()
+                    
+                    for msg in messages:
+                        content = msg.get('content', [])
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if 'toolUse' in block:
+                                        tool_use_id = block['toolUse'].get('toolUseId')
+                                        if tool_use_id:
+                                            tool_use_ids.add(tool_use_id)
+                                    elif 'toolResult' in block:
+                                        tool_result_id = block['toolResult'].get('toolUseId')
+                                        if tool_result_id:
+                                            tool_result_ids.add(tool_result_id)
+                    
+                    orphaned_tool_uses = tool_use_ids - tool_result_ids
+                    orphaned_tool_results = tool_result_ids - tool_use_ids
+                    
+                    if orphaned_tool_uses:
+                        logger.warning(f"INVALID STATE: Found {len(orphaned_tool_uses)} orphaned toolUse blocks without matching toolResult:")
+                        for tool_id in orphaned_tool_uses:
+                            logger.warning(f"  - {tool_id}")
+                        logger.warning("This will cause ValidationException with 'Expected toolResult blocks' error")
+                        logger.warning("Clearing conversation to reset state...")
+                        conversation.messages = []
+                        logger.info("Conversation cleared successfully")
+                    else:
+                        logger.info(f"✓ All {len(tool_use_ids)} toolUse blocks have matching toolResult blocks")
+                    
+                    if orphaned_tool_results:
+                        logger.warning(f"Found {len(orphaned_tool_results)} orphaned toolResult blocks without matching toolUse:")
+                        for tool_id in orphaned_tool_results:
+                            logger.warning(f"  - {tool_id}")
+                    
+                    logger.info("=== END VALIDATION ===")
+                    
+                else:
+                    logger.info("Conversation has no 'messages' attribute")
+            else:
+                logger.info("Agent has no session_manager or conversation")
+                
+        except Exception as diag_error:
+            logger.error(f"Error during conversation diagnostic: {diag_error}")
+            import traceback
+            logger.error(traceback.format_exc())
+        
+        logger.info("=== END PRE-INVOCATION DIAGNOSTIC ===")
+        
         # Invoke the agent
         result = agent(user_input)
 
