@@ -57,8 +57,6 @@ def create_resources(create_lambda=True, create_iam=True, create_cognito=True, c
     lambda_resp = None
     agentcore_gateway_iam_role = None
     user_pool_id = None
-    client_m2m_id = None
-    client_m2m_secret = None
     client_id = None
     gatewayURL = None
     targetname = None

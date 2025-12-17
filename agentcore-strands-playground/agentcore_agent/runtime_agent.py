@@ -11,7 +11,6 @@ import boto3
 from typing import Dict, List
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
-from botocore.credentials import Credentials
 
 # Load environment variables
 load_dotenv()
@@ -22,8 +21,8 @@ from strands.models import BedrockModel
 from strands_tools import (
     agent_graph, calculator, cron, current_time, editor, environment,
     file_read, file_write, generate_image, http_request, image_reader, journal,
-    load_tool, memory, nova_reels,
-    # python_repl, 
+    load_tool, nova_reels,
+    #python_repl, 
     retrieve, shell, 
     #slack,
     speak, stop, swarm, think, use_aws, use_llm, workflow
@@ -116,7 +115,6 @@ available_tools = {
     'image_reader': image_reader,
     'journal': journal,
     'load_tool': load_tool,
-#    'memory': memory,
     'nova_reels': nova_reels,
 #    'python_repl': python_repl, 
     'retrieve': retrieve,
@@ -265,7 +263,6 @@ def get_or_create_agent(model_id: str, tool_names: List[str] = None, actor_id: s
         # Set state values using the state manager
         agent_cache[cache_key].state.set("actor_id", actor_id)
         agent_cache[cache_key].state.set("session_id", session_id)
-        agent_cache[cache_key].state.set("session_name", session_id)
         
         # Track tools and first invocation for this model
         current_tools_per_agent[cache_key] = tool_names
@@ -337,14 +334,17 @@ def invoke_agent(payload, **kwargs) -> str:
             model_id = payload.get('model_id', MODEL_ID)  # Extract model_id from payload
             memory_id = payload.get('memory_id')
             tool_names = payload.get('tools')  # Extract tools list from payload
+            memory_debug = payload.get('memoryDebug', False)  # Extract memoryDebug flag
         elif isinstance(payload, str):
             user_input = payload
             session_id = "default_session"  # Provide default session_id for string payloads
+            memory_debug = False
         else:
             user_input = str(payload)
             session_id = "default_session"  # Provide default session_id
+            memory_debug = False
 
-        logger.debug(f"Using memory: {memory_id}")
+        logger.debug(f"Using memory: {memory_id}, debugging {memory_debug}")
         
         # Validate input
         if not user_input or not isinstance(user_input, str):
@@ -361,15 +361,54 @@ def invoke_agent(payload, **kwargs) -> str:
         # Get or create agent for the specified model
         agent = get_or_create_agent(model_id, tool_names, username, session_id)
 
+        # Retrieve and log memories from session manager (only if memoryDebug is enabled)
+        if memory_debug and hasattr(agent, 'session_manager') and isinstance(agent.session_manager, AgentCoreMemorySessionManager):
+            try:
+                # Get the memory client from session manager
+                memory_client = agent.session_manager.memory_client
+                memory_config = agent.session_manager.memory_config
+                
+                logger.info(f"=== Memory Retrieval for session: {session_id}, actor: {username} ===")
+                
+                # Retrieve memories from different namespaces
+                for namespace, retrieval_config in memory_config.retrieval_config.items():
+                    try:
+                        # Query memories from this namespace
+                        response = memory_client.query_memory(
+                            memoryId=memory_config.memory_id,
+                            text=user_input,  # Use current input as query
+                            namespace=namespace,
+                            maxResults=retrieval_config.top_k
+                        )
+                        
+                        memories = response.get('memories', [])
+                        logger.info(f"Namespace '{namespace}': Found {len(memories)} memories")
+                        
+                        for idx, memory in enumerate(memories, 1):
+                            memory_content = memory.get('content', {}).get('text', 'N/A')
+                            relevance_score = memory.get('relevanceScore', 0)
+                            logger.debug(f"  Memory {idx} (score: {relevance_score:.3f}): {memory_content[:100]}...")
+                            
+                    except Exception as ns_error:
+                        logger.debug(f"Could not retrieve memories from namespace '{namespace}': {ns_error}")
+                
+                logger.info("=== End Memory Retrieval ===")
+                
+            except Exception as mem_error:
+                logger.debug(f"Could not retrieve memories: {mem_error}")
+
         # Invoke the agent
-        #logger.debug(F"Invoking {agent} with {user_input}")
         result = agent(user_input)
 
         # Extract response text
         response_text = ""
         if isinstance(result.message, dict) and "content" in result.message:
             if isinstance(result.message["content"], list):
-                response_text = result.message["content"][0].get("text", str(result.message))
+                if len(result.message["content"]) > 0:
+                    response_text = result.message["content"][0].get("text", str(result.message))
+                else:
+                    logger.warning("Agent returned empty content array")
+                    response_text = "[Agent returned no content]"
             else:
                 response_text = result.message["content"]
         else:

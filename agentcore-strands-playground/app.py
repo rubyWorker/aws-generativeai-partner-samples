@@ -175,7 +175,7 @@ def fetch_agent_runtime_versions(
         return []
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-# TODO: instead of pulling all memories, look into .bedrock_agentcore.yaml and find the memory ID used by the agent
+# option to consider: instead of pulling all memories, look into .bedrock_agentcore.yaml and find the memory ID used by the agent
 def fetch_memory(region: str) -> List[Dict]:
     """Fetch available memories from bedrock-agentcore-control"""
     try:
@@ -190,13 +190,13 @@ def fetch_memory(region: str) -> List[Dict]:
         for memory in total_memories:
             memory_id = memory.get("id", "Unknown")
             memory_status = memory.get("status", "Unknown")
-            #logger.info(f"Retrieved memory: {memory_id} (status: {memory_status})")
+            logger.debug(f"Retrieved memory: {memory_id} (status: {memory_status})")
             
             if memory.get("status") == "ACTIVE":
                 ready_memories.append(memory)
-                #logger.info(f"Added Active memory: {memory_id}")
+                logger.debug(f"Added Active memory: {memory_id}")
         
-        #logger.info(f"Final ready_memories count: {len(ready_memories)}")
+        logger.debug(f"Final ready_memories count: {len(ready_memories)}")
 
         # Sort by most recent update time (newest first)
         ready_memories.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
@@ -257,7 +257,7 @@ def fetch_sessions(region: str, memory_id: str, actor_id: str) -> List[Dict]:
                     if display_name:
                         session_name = display_name
                 
-                #logger.info(f"Creating initialization event for new session: {st.session_state.runtime_session_id}")
+                logger.debug(f"Creating initialization event for new session: {st.session_state.runtime_session_id} name: {session_name}")
                 
                 # Create minimal blob event to make session visible in list_sessions
                 init_response = client.create_event(
@@ -368,6 +368,7 @@ def invoke_agentcore_runtime_auth(message: str, agent_arn: str, region: str, acc
         
         # Add model_id to payload - get from session state or use STRANDS_MODEL_ID from .env
         model_id = st.session_state.get('selected_bedrock_model_id', os.getenv('STRANDS_MODEL_ID', 'us.amazon.nova-pro-v1:0'))
+        logger.info(f"[AUTH] Using model_id: {model_id} (session_state: {st.session_state.get('selected_bedrock_model_id')}, .env: {os.getenv('STRANDS_MODEL_ID')})")
         if model_id:
             payload_data["model_id"] = model_id
         
@@ -380,9 +381,7 @@ def invoke_agentcore_runtime_auth(message: str, agent_arn: str, region: str, acc
         if selected_tools:
             payload_data["tools"] = selected_tools
         
-        # Enable verbose logging for debugging (optional)
-        # logging.basicConfig(level=logging.DEBUG)
-        # logging.getLogger("urllib3.connectionpool").setLevel(logging.DEBUG)
+        payload_data["memoryDebug"] = True
         
         # Make the HTTP POST request
         invoke_response = requests.post(
@@ -532,6 +531,7 @@ def invoke_agentcore_runtime_no_auth(message: str, agent_arn: str, region: str, 
         
         # Add model_id to payload - get from session state or use STRANDS_MODEL_ID from .env
         model_id = st.session_state.get('selected_bedrock_model_id', os.getenv('STRANDS_MODEL_ID', 'us.amazon.nova-pro-v1:0'))
+        logger.info(f"[NO-AUTH] Using model_id: {model_id} (session_state: {st.session_state.get('selected_bedrock_model_id')}, .env: {os.getenv('STRANDS_MODEL_ID')})")
         if model_id:
             payload_data["model_id"] = model_id
         
@@ -543,6 +543,8 @@ def invoke_agentcore_runtime_no_auth(message: str, agent_arn: str, region: str, 
         selected_tools = st.session_state.get('selected_tools', DEFAULT_TOOLS)
         if selected_tools:
             payload_data["tools"] = selected_tools
+        
+        payload_data["memoryDebug"] = True
         
         # Encode payload as JSON bytes
         payload = json.dumps(payload_data).encode()
@@ -730,9 +732,6 @@ def render_tools_panel_content():
             # Update selected tools based on checkboxes
             new_selected_tools = [tool_name for tool_name, is_selected in tool_selections.items() if is_selected]
             
-            #if len(new_selected_tools) == 0:
-            #    st.warning("⚠️ Please select at least one tool")
-            #else:
             st.session_state.selected_tools = new_selected_tools
             st.success(f"✅ Updated! {len(new_selected_tools)} tool(s) selected")
             st.rerun()
@@ -912,7 +911,8 @@ def show_settings_sidebar(auth):
                                 if hasattr(updated, "strftime"):
                                     updated_str = updated.strftime("%m/%d %H:%M")
                                     version_display += f" ({updated_str})"
-                            except:
+                            except Exception:
+                                logger.debug(F"No 'update' time on agent; continuing")
                                 pass
 
                         version_options.append(version_display)
@@ -1075,6 +1075,12 @@ def show_settings_sidebar(auth):
             # Clear the input box for next time
             st.session_state.new_session_input = ""
             
+            # Set flag to prevent chat input processing until after rerun
+            st.session_state.session_just_created = True
+            
+            # Clear the session cache so the new session appears in the dropdown
+            fetch_sessions.clear()
+            
             logger.info(f"Created new session: {st.session_state.runtime_session_id}")
             st.rerun()
 
@@ -1131,6 +1137,11 @@ def main():
 
         # Chat input
         if prompt := st.chat_input("Type your message here..."):
+            # Check if session was just created - if so, skip this input and clear flag
+            if st.session_state.get('session_just_created', False):
+                st.session_state.session_just_created = False
+                st.rerun()
+            
             # AgentCore mode implementation
             selected_agent_arn = st.session_state.get('selected_agent_arn', '')
             if selected_agent_arn:
