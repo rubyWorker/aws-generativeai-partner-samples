@@ -1,0 +1,7 @@
+{
+  "_class_name": "BriaFiboGeminiPromptToJson",
+  "_diffusers_version": "0.35.0.dev0",
+  "auto_map": {
+    "ModularPipelineBlocks": "gemini_prompt_to_json.BriaFiboGeminiPromptToJson"
+  }
+}
