@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Ignore all markdown files (including fibo-bedrock-pipe/README.md)
+*.md
+!/README.md
+
+# Ignore all Python files except specific ones
+*.py
+!fibo-bedrock-pipe/*.py
+!use_fibo.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+.json
+.png
+

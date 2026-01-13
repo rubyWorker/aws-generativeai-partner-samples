@@ -1,0 +1,37 @@
+{
+  "_class_name": "BriaFiboGeminiPromptToJson",
+  "_diffusers_version": "0.36.0.dev0",
+  "auto_map": {
+    "ModularPipelineBlocks": "gemini_prompt_to_json.BriaFiboGeminiPromptToJson"
+  },
+  "requirements": [
+    [
+      "google.generativeai",
+      "0.8.4"
+    ],
+    [
+        "google-genai",
+        "1.46.0"
+    ],
+    [
+      "transformers",
+      "4.57.1"
+    ],
+    [
+        "pydantic",
+        "2.12.3"
+    ],
+    [
+        "boltons",
+        "25.0.0"
+    ],
+    [
+        "ujson",
+        "5.11.0"
+    ],
+    [
+        "Pillow",
+        "10.1.0"
+    ]
+  ]
+}
