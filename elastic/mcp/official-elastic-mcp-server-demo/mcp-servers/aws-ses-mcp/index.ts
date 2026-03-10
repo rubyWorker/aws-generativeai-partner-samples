@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import AWS from "aws-sdk";
+import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import minimist from "minimist";
 
 // Parse command line arguments
@@ -32,13 +32,13 @@ if (!awsAccessKeyId || !awsSecretAccessKey) {
 }
 
 // Initialize AWS SES client
-AWS.config.update({
-  accessKeyId: awsAccessKeyId,
-  secretAccessKey: awsSecretAccessKey,
-  region: awsRegion
+const ses = new SESClient({
+  region: awsRegion,
+  credentials: {
+    accessKeyId: awsAccessKeyId,
+    secretAccessKey: awsSecretAccessKey,
+  },
 });
-
-const ses = new AWS.SES();
 
 // Create server instance
 const server = new McpServer({
@@ -46,6 +46,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+// Define a simple, fixed schema that includes all possible fields
 server.tool(
   "send-email",
   "Send an email using AWS SES",
@@ -60,44 +61,29 @@ server.tool(
         "HTML email content. When provided, the plain text argument MUST be provided as well."
       ),
     cc: z
-      .string()
-      .email()
-      .array()
+      .array(z.string().email())
       .optional()
       .describe("Optional array of CC email addresses. You MUST ask the user for this parameter. Under no circumstance provide it yourself"),
     bcc: z
-      .string()
-      .email()
-      .array()
+      .array(z.string().email())
       .optional()
       .describe("Optional array of BCC email addresses. You MUST ask the user for this parameter. Under no circumstance provide it yourself"),
-    // Note: Removed scheduledAt as AWS SES doesn't support scheduling directly
-    // If sender email address is not provided, the tool requires it as an argument
-    ...(!senderEmailAddress
-      ? {
-          from: z
-            .string()
-            .email()
-            .nonempty()
-            .describe(
-              "Sender email address. You MUST ask the user for this parameter. Under no circumstance provide it yourself"
-            ),
-        }
-      : {}),
-    ...(replierEmailAddresses.length === 0
-      ? {
-          replyTo: z
-            .string()
-            .email()
-            .array()
-            .optional()
-            .describe(
-              "Optional email addresses for the email readers to reply to. You MUST ask the user for this parameter. Under no circumstance provide it yourself"
-            ),
-        }
-      : {}),
+    from: z
+      .string()
+      .email()
+      .optional()
+      .describe(
+        "Sender email address. You MUST ask the user for this parameter. Under no circumstance provide it yourself"
+      ),
+    replyTo: z
+      .array(z.string().email())
+      .optional()
+      .describe(
+        "Optional email addresses for the email readers to reply to. You MUST ask the user for this parameter. Under no circumstance provide it yourself"
+      ),
   },
-  async ({ from, to, subject, text, html, replyTo, cc, bcc }) => {
+  async (params: any) => {
+    const { from, to, subject, text, html, replyTo, cc, bcc } = params;
     const fromEmailAddress = from ?? senderEmailAddress;
     const replyToEmailAddresses = replyTo ?? replierEmailAddresses;
 
@@ -150,7 +136,8 @@ server.tool(
     console.error(`Email request: ${JSON.stringify(emailParams)}`);
 
     try {
-      const response = await ses.sendEmail(emailParams).promise();
+      const command = new SendEmailCommand(emailParams);
+      const response = await ses.send(command);
 
       return {
         content: [

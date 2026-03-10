@@ -26,6 +26,9 @@ from real_world_data import (
 # Initialize Faker
 fake = faker.Faker()
 
+# Base date for data generation (2026-2028 range, no 2025 data)
+BASE_DATE = datetime(2026, 3, 9)
+
 # Configuration
 DEFAULT_NUM_DESTINATIONS = 20  # Reduced to match real-world data
 DEFAULT_NUM_ATTRACTIONS_PER_DEST = 5
@@ -345,7 +348,7 @@ def generate_advisories(destinations, num_per_destination):
         for i in range(1, num_per_destination + 1):
             advisory_id = f"{dest_id}_ADV{i:03d}"
             
-            issue_date = datetime.now() - timedelta(days=random.randint(1, 60))
+            issue_date = BASE_DATE - timedelta(days=random.randint(1, 60))
             expiry_date = issue_date + timedelta(days=random.randint(30, 180))
             
             # Use real advisory data if available
@@ -405,7 +408,7 @@ def generate_weather(destinations, num_records_per_destination):
         # Generate weather for the next X days
         for i in range(num_records_per_destination):
             weather_id = f"{dest_id}_WTHR{i+1:03d}"
-            forecast_date = datetime.now() + timedelta(days=i)
+            forecast_date = BASE_DATE + timedelta(days=i)
             date_str = forecast_date.strftime("%Y-%m-%d")
             
             # Determine season based on month and hemisphere
@@ -502,6 +505,23 @@ def generate_weather(destinations, num_records_per_destination):
     
     return weather_records
 
+def _parse_event_date(date_str, base_year):
+    """Parse a 'Month Day' date string into (month, day). Returns None on failure."""
+    month_dict = {
+        "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
+        "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
+    }
+    try:
+        parts = date_str.strip().split()
+        if len(parts) >= 2:
+            month = month_dict.get(parts[0])
+            day = int(parts[1])
+            if month and 1 <= day <= 31:
+                return month, day
+    except (ValueError, IndexError):
+        pass
+    return None
+
 def generate_events(destinations, num_per_destination):
     """Generate event data based on real-world events."""
     events = []
@@ -524,52 +544,38 @@ def generate_events(destinations, num_per_destination):
                 lat_offset = random.uniform(-0.02, 0.02)
                 lon_offset = random.uniform(-0.02, 0.02)
                 
-                # Parse event dates and create realistic dates
-                current_year = datetime.now().year
+                current_year = BASE_DATE.year
                 
-                # Handle date strings like "July 14" or date ranges like "Late March to Early April"
-                if "to" in event_data["start_date"] or "-" in event_data["start_date"]:
-                    # For date ranges, pick a random date within the range
+                # Parse start and end dates (format: "Month Day")
+                parsed_start = _parse_event_date(event_data["start_date"], current_year)
+                parsed_end = _parse_event_date(event_data["end_date"], current_year)
+                
+                if parsed_start:
+                    start_month, start_day = parsed_start
+                else:
                     start_month = random.randint(1, 12)
                     start_day = random.randint(1, 28)
-                else:
-                    # Try to parse specific dates
-                    try:
-                        date_parts = event_data["start_date"].split()
-                        if len(date_parts) >= 2:
-                            month_name = date_parts[-2]
-                            month_dict = {
-                                "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
-                                "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
-                            }
-                            start_month = month_dict.get(month_name, random.randint(1, 12))
-                            try:
-                                start_day = int(''.join(filter(str.isdigit, date_parts[-1])))
-                                if start_day < 1 or start_day > 28:
-                                    start_day = random.randint(1, 28)
-                            except:
-                                start_day = random.randint(1, 28)
-                        else:
-                            start_month = random.randint(1, 12)
-                            start_day = random.randint(1, 28)
-                    except:
-                        start_month = random.randint(1, 12)
-                        start_day = random.randint(1, 28)
                 
                 # If the event date is in the past for this year, use next year
                 event_year = current_year
-                if datetime(current_year, start_month, start_day) < datetime.now():
+                if datetime(current_year, start_month, start_day) < BASE_DATE:
                     event_year = current_year + 1
                 
-                # Create start and end dates
                 start_date = datetime(event_year, start_month, start_day)
                 
-                # Determine event duration (1-7 days)
-                duration_days = random.randint(1, 7)
-                if event_data["start_date"] == event_data["end_date"]:
-                    duration_days = 1
+                # Calculate end date from the end_date field
+                if parsed_end:
+                    end_month, end_day = parsed_end
+                    # Handle events that cross year boundary (e.g., Dec 31 - Jan 1)
+                    end_year = event_year
+                    if (end_month, end_day) < (start_month, start_day):
+                        end_year = event_year + 1
+                    end_date = datetime(end_year, end_month, end_day)
+                else:
+                    end_date = start_date
                 
-                end_date = start_date + timedelta(days=duration_days - 1)
+                # Use real venue from event data, fall back to generated
+                venue = event_data.get("venue", fake.company() + " " + random.choice(["Arena", "Center", "Stadium", "Hall"]))
                 
                 events.append({
                     "event_id": event_id,
@@ -579,8 +585,8 @@ def generate_events(destinations, num_per_destination):
                     "description": event_data["description"],
                     "start_date": start_date.strftime("%Y-%m-%d"),
                     "end_date": end_date.strftime("%Y-%m-%d"),
-                    "venue": fake.company() + " " + random.choice(["Arena", "Center", "Stadium", "Hall", "Theater", "Park", "Square"]),
-                    "address": fake.address().replace('\n', ', '),
+                    "venue": venue,
+                    "address": f"{city}, {destination['country']}",
                     "latitude": base_lat + lat_offset,
                     "longitude": base_lon + lon_offset,
                     "price_range": random.choice(PRICE_RANGES),
@@ -599,8 +605,8 @@ def generate_events(destinations, num_per_destination):
                     lat_offset = random.uniform(-0.05, 0.05)
                     lon_offset = random.uniform(-0.05, 0.05)
                     
-                    # Random dates in the next 6 months
-                    start_date = datetime.now() + timedelta(days=random.randint(1, 180))
+                    # Random dates in the next 6 months (2026-2028 range)
+                    start_date = BASE_DATE + timedelta(days=random.randint(1, 180))
                     duration_days = random.randint(1, 7)
                     end_date = start_date + timedelta(days=duration_days - 1)
                     
@@ -631,8 +637,8 @@ def generate_events(destinations, num_per_destination):
                 lat_offset = random.uniform(-0.05, 0.05)
                 lon_offset = random.uniform(-0.05, 0.05)
                 
-                # Random dates in the next 6 months
-                start_date = datetime.now() + timedelta(days=random.randint(1, 180))
+                # Random dates in the next 6 months (2026-2028 range)
+                start_date = BASE_DATE + timedelta(days=random.randint(1, 180))
                 duration_days = random.randint(1, 7)
                 end_date = start_date + timedelta(days=duration_days - 1)
                 

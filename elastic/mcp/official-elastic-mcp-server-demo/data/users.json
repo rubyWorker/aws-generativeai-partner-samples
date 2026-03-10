@@ -1,0 +1,99 @@
+[
+  {
+    "user_id": "USER001",
+    "email": "john.smith@example.com",
+    "first_name": "John",
+    "last_name": "Smith",
+    "phone": "+1-555-123-4567",
+    "date_of_birth": "1985-06-15",
+    "nationality": "United States",
+    "preferred_language": "English",
+    "preferred_currency": "USD",
+    "loyalty_tier": "Gold",
+    "loyalty_points": 5000,
+    "account_created": "2020-03-10",
+    "last_login": "2026-03-08",
+    "preferences": [
+      "Non-smoking",
+      "High floor",
+      "King bed"
+    ],
+    "dietary_restrictions": [
+      "None"
+    ],
+    "special_needs": ""
+  },
+  {
+    "user_id": "USER002",
+    "email": "maria.garcia@example.com",
+    "first_name": "Maria",
+    "last_name": "Garcia",
+    "phone": "+34-611-234-567",
+    "date_of_birth": "1990-11-22",
+    "nationality": "Spain",
+    "preferred_language": "Spanish",
+    "preferred_currency": "EUR",
+    "loyalty_tier": "Silver",
+    "loyalty_points": 2500,
+    "account_created": "2021-07-15",
+    "last_login": "2026-03-07",
+    "preferences": [
+      "Quiet room",
+      "Twin beds",
+      "Near elevator"
+    ],
+    "dietary_restrictions": [
+      "Vegetarian"
+    ],
+    "special_needs": ""
+  },
+  {
+    "user_id": "USER003",
+    "email": "akira.tanaka@example.com",
+    "first_name": "Akira",
+    "last_name": "Tanaka",
+    "phone": "+81-90-1234-5678",
+    "date_of_birth": "1978-09-03",
+    "nationality": "Japan",
+    "preferred_language": "Japanese",
+    "preferred_currency": "JPY",
+    "loyalty_tier": "Platinum",
+    "loyalty_points": 12000,
+    "account_created": "2019-01-20",
+    "last_login": "2026-03-09",
+    "preferences": [
+      "Non-smoking",
+      "Japanese breakfast",
+      "Late check-out"
+    ],
+    "dietary_restrictions": [
+      "No pork"
+    ],
+    "special_needs": "Accessible bathroom"
+  },
+  {
+    "user_id": "USER_VJASTI",
+    "email": "varun.jasti@example.com",
+    "first_name": "Varun",
+    "last_name": "Jasti",
+    "phone": "+1-555-987-6543",
+    "date_of_birth": "1992-04-18",
+    "nationality": "United States",
+    "preferred_language": "English",
+    "preferred_currency": "USD",
+    "loyalty_tier": "Platinum",
+    "loyalty_points": 15000,
+    "account_created": "2019-06-01",
+    "last_login": "2026-03-09",
+    "preferences": [
+      "Non-smoking",
+      "High floor",
+      "King bed",
+      "Late check-out"
+    ],
+    "dietary_restrictions": [
+      "None"
+    ],
+    "special_needs": ""
+  }
+]

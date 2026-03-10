@@ -207,6 +207,8 @@ room_availability_schema = {
         "properties": {
             "availability_id": {"type": "keyword"},
             "hotel_id": {"type": "keyword"},  # Reference to hotel
+            "hotel_name": {"type": "text"},
+            "city": {"type": "keyword"},
             "room_type": {"type": "keyword"},
             "date": {"type": "date"},
             "available_rooms": {"type": "integer"},
