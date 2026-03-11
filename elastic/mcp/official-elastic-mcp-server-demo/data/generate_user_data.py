@@ -238,6 +238,7 @@ def generate_future_reservations(user, hotels, num_reservations=1):
     return reservations
 
 
+
 def generate_room_availability():
     """Generate event-centric room availability data using real hotels from DESTINATION_HOTELS.
 
@@ -245,8 +246,26 @@ def generate_room_availability():
     - A 30-day general window from BASE_DATE
     - ±3 days around each event in DESTINATION_EVENTS
     This keeps the dataset small and fast to load into Elasticsearch.
+
+    Hotel IDs are generated to match the scheme used by generate_data.py so that
+    room_availability records can be cross-referenced with the hotels index.
     """
-    from real_world_data import DESTINATION_EVENTS, DESTINATION_HOTELS
+    from real_world_data import DESTINATION_EVENTS, DESTINATION_HOTELS, REAL_DESTINATIONS
+
+    # Build city -> dest_id mapping (same ordering as generate_data.py)
+    city_to_dest_id = {}
+    for i, dest in enumerate(REAL_DESTINATIONS):
+        city_to_dest_id[dest["city"]] = f"DEST{i+1:04d}"
+
+    # Build (city, hotel_name) -> hotel_id mapping using same scheme as generate_data.py
+    hotel_id_map = {}
+    num_hotels_per_dest = 5  # matches DEFAULT_NUM_HOTELS_PER_DEST in generate_data.py
+    for city, hotels_list in DESTINATION_HOTELS.items():
+        dest_id = city_to_dest_id.get(city)
+        if not dest_id:
+            continue
+        for i, hotel_data in enumerate(hotels_list[:num_hotels_per_dest]):
+            hotel_id_map[(city, hotel_data["name"])] = f"{dest_id}_HOTEL{i+1:03d}"
 
     availability_records = []
     now = BASE_DATE
@@ -264,7 +283,7 @@ def generate_room_availability():
     ]
 
     # Currency map by city
-    city_currency = {d["city"]: d["currency"] for d in __import__('real_world_data').REAL_DESTINATIONS}
+    city_currency = {d["city"]: d["currency"] for d in REAL_DESTINATIONS}
 
     for city, hotels in DESTINATION_HOTELS.items():
         events = DESTINATION_EVENTS.get(city, [])
@@ -329,9 +348,13 @@ def generate_room_availability():
             except (ValueError, IndexError, KeyError):
                 pass
 
-        for hotel_info in hotels:
+        for hotel_info in hotels[:num_hotels_per_dest]:
             hotel_name = hotel_info["name"]
-            hotel_id = hotel_name.replace(" ", "_").replace(",", "").replace("'", "").upper()[:30]
+            # Use the same hotel_id as the hotels index
+            hotel_id = hotel_id_map.get((city, hotel_name))
+            if not hotel_id:
+                # Fallback: generate from name (shouldn't happen if data is consistent)
+                hotel_id = hotel_name.replace(" ", "_").replace(",", "").replace("'", "").upper()[:30]
             base_price = random.choice([150, 200, 250, 300, 350, 400]) if hotel_info.get("star_rating", 4) >= 5 else random.choice([80, 100, 120, 150])
 
             for room_type, type_multiplier in room_types_config:
@@ -381,6 +404,7 @@ def generate_room_availability():
 
     print(f"Generated {len(availability_records)} room availability records across {len(DESTINATION_HOTELS)} cities")
     return availability_records
+
 
 
 def create_index(es_client, index_name, schema):

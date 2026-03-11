@@ -1,29 +1,33 @@
 """
 Elasticsearch schemas for Travel Advisory Application.
 These schemas are intentionally flat (non-nested) for easier querying.
+All string fields use text+keyword multi-field so the Elasticsearch MCP server
+can reference field.keyword for sorting, filtering, and term queries.
+Only `name`, `description`, `address`, `venue`, and similar free-text fields
+are plain `text` (no .keyword sub-field).
 """
 
 # Destinations index schema
 destinations_schema = {
     "mappings": {
         "properties": {
-            "destination_id": {"type": "keyword"},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "name": {"type": "text"},
-            "city": {"type": "keyword"},
-            "country": {"type": "keyword"},
-            "continent": {"type": "keyword"},
+            "city": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "country": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "continent": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "latitude": {"type": "float"},
             "longitude": {"type": "float"},
             "description": {"type": "text"},
-            "best_season": {"type": "keyword"},
-            "climate": {"type": "keyword"},
-            "language": {"type": "keyword"},
-            "currency": {"type": "keyword"},
-            "timezone": {"type": "keyword"},
-            "safety_rating": {"type": "integer"},  # 1-10 scale
-            "popularity_score": {"type": "integer"},  # 1-100 scale
-            "cost_level": {"type": "keyword"},  # Budget, Moderate, Luxury
-            "tags": {"type": "keyword"}  # Beach, Mountain, Cultural, etc.
+            "best_season": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "climate": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "language": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "currency": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "timezone": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "safety_rating": {"type": "integer"},
+            "popularity_score": {"type": "integer"},
+            "cost_level": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "tags": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
         }
     }
 }
@@ -32,23 +36,23 @@ destinations_schema = {
 attractions_schema = {
     "mappings": {
         "properties": {
-            "attraction_id": {"type": "keyword"},
-            "destination_id": {"type": "keyword"},  # Reference to destination
+            "attraction_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "name": {"type": "text"},
-            "type": {"type": "keyword"},  # Museum, Park, Monument, etc.
+            "type": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "description": {"type": "text"},
             "latitude": {"type": "float"},
             "longitude": {"type": "float"},
             "address": {"type": "text"},
             "opening_hours": {"type": "text"},
             "closing_hours": {"type": "text"},
-            "price_range": {"type": "keyword"},  # Free, $, $$, $$$
+            "price_range": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "duration_minutes": {"type": "integer"},
             "accessibility": {"type": "boolean"},
-            "rating": {"type": "float"},  # 0-5 scale
-            "tags": {"type": "keyword"},
-            "best_time_to_visit": {"type": "keyword"},
-            "crowd_level": {"type": "keyword"}  # Low, Moderate, High
+            "rating": {"type": "float"},
+            "tags": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "best_time_to_visit": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "crowd_level": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
         }
     }
 }
@@ -57,26 +61,26 @@ attractions_schema = {
 hotels_schema = {
     "mappings": {
         "properties": {
-            "hotel_id": {"type": "keyword"},
-            "destination_id": {"type": "keyword"},  # Reference to destination
+            "hotel_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "name": {"type": "text"},
-            "brand": {"type": "keyword"},
+            "brand": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "address": {"type": "text"},
             "latitude": {"type": "float"},
             "longitude": {"type": "float"},
-            "star_rating": {"type": "integer"},  # 1-5 stars
-            "user_rating": {"type": "float"},  # 0-5 scale
+            "star_rating": {"type": "integer"},
+            "user_rating": {"type": "float"},
             "price_per_night": {"type": "float"},
-            "currency": {"type": "keyword"},
-            "amenities": {"type": "keyword"},  # Pool, Spa, Restaurant, etc.
-            "room_types": {"type": "keyword"},  # Single, Double, Suite, etc.
+            "currency": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "amenities": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "room_types": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "breakfast_included": {"type": "boolean"},
             "free_wifi": {"type": "boolean"},
             "parking_available": {"type": "boolean"},
             "distance_to_center_km": {"type": "float"},
             "pet_friendly": {"type": "boolean"},
-            "check_in_time": {"type": "keyword"},
-            "check_out_time": {"type": "keyword"}
+            "check_in_time": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "check_out_time": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
         }
     }
 }
@@ -85,19 +89,19 @@ hotels_schema = {
 advisories_schema = {
     "mappings": {
         "properties": {
-            "advisory_id": {"type": "keyword"},
-            "destination_id": {"type": "keyword"},  # Reference to destination
-            "country": {"type": "keyword"},
-            "advisory_level": {"type": "keyword"},  # Low, Medium, High, Extreme
+            "advisory_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "country": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "advisory_level": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "description": {"type": "text"},
             "issue_date": {"type": "date"},
             "expiry_date": {"type": "date"},
-            "issuing_authority": {"type": "keyword"},
+            "issuing_authority": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "health_risks": {"type": "text"},
             "safety_risks": {"type": "text"},
             "entry_requirements": {"type": "text"},
             "visa_required": {"type": "boolean"},
-            "vaccination_required": {"type": "keyword"},
+            "vaccination_required": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "currency_restrictions": {"type": "text"},
             "local_laws": {"type": "text"},
             "emergency_contacts": {"type": "text"}
@@ -109,18 +113,18 @@ advisories_schema = {
 weather_schema = {
     "mappings": {
         "properties": {
-            "weather_id": {"type": "keyword"},
-            "destination_id": {"type": "keyword"},  # Reference to destination
+            "weather_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "date": {"type": "date"},
             "temperature_high_celsius": {"type": "float"},
             "temperature_low_celsius": {"type": "float"},
             "precipitation_mm": {"type": "float"},
             "humidity_percent": {"type": "integer"},
             "wind_speed_kmh": {"type": "float"},
-            "weather_condition": {"type": "keyword"},  # Sunny, Cloudy, Rainy, etc.
+            "weather_condition": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "uv_index": {"type": "integer"},
             "air_quality_index": {"type": "integer"},
-            "forecast_accuracy": {"type": "float"}  # 0-1 scale
+            "forecast_accuracy": {"type": "float"}
         }
     }
 }
@@ -129,10 +133,10 @@ weather_schema = {
 events_schema = {
     "mappings": {
         "properties": {
-            "event_id": {"type": "keyword"},
-            "destination_id": {"type": "keyword"},  # Reference to destination
+            "event_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "destination_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "name": {"type": "text"},
-            "type": {"type": "keyword"},  # Festival, Concert, Sports, etc.
+            "type": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "description": {"type": "text"},
             "start_date": {"type": "date"},
             "end_date": {"type": "date"},
@@ -140,11 +144,11 @@ events_schema = {
             "address": {"type": "text"},
             "latitude": {"type": "float"},
             "longitude": {"type": "float"},
-            "price_range": {"type": "keyword"},  # Free, $, $$, $$$
+            "price_range": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "ticket_required": {"type": "boolean"},
-            "booking_url": {"type": "keyword"},
-            "local_significance": {"type": "keyword"},  # Low, Medium, High
-            "crowd_expectation": {"type": "keyword"}  # Low, Moderate, High
+            "booking_url": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "local_significance": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "crowd_expectation": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
         }
     }
 }
@@ -153,21 +157,21 @@ events_schema = {
 users_schema = {
     "mappings": {
         "properties": {
-            "user_id": {"type": "keyword"},
-            "email": {"type": "keyword"},
+            "user_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "email": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "first_name": {"type": "text"},
             "last_name": {"type": "text"},
-            "phone": {"type": "keyword"},
+            "phone": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "date_of_birth": {"type": "date"},
-            "nationality": {"type": "keyword"},
-            "preferred_language": {"type": "keyword"},
-            "preferred_currency": {"type": "keyword"},
-            "loyalty_tier": {"type": "keyword"},  # Standard, Silver, Gold, Platinum
+            "nationality": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "preferred_language": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "preferred_currency": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "loyalty_tier": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "loyalty_points": {"type": "integer"},
             "account_created": {"type": "date"},
             "last_login": {"type": "date"},
-            "preferences": {"type": "keyword"},  # Room preferences, amenities, etc.
-            "dietary_restrictions": {"type": "keyword"},
+            "preferences": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "dietary_restrictions": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "special_needs": {"type": "text"}
         }
     }
@@ -177,26 +181,26 @@ users_schema = {
 reservations_schema = {
     "mappings": {
         "properties": {
-            "reservation_id": {"type": "keyword"},
-            "user_id": {"type": "keyword"},  # Reference to user
-            "hotel_id": {"type": "keyword"},  # Reference to hotel
-            "room_type": {"type": "keyword"},
+            "reservation_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "user_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "hotel_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "room_type": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "check_in_date": {"type": "date"},
             "check_out_date": {"type": "date"},
             "num_guests": {"type": "integer"},
             "num_rooms": {"type": "integer"},
             "total_price": {"type": "float"},
-            "currency": {"type": "keyword"},
-            "payment_status": {"type": "keyword"},  # Pending, Paid, Refunded, etc.
-            "payment_method": {"type": "keyword"},  # Credit Card, PayPal, etc.
+            "currency": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "payment_status": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "payment_method": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "booking_date": {"type": "date"},
-            "booking_source": {"type": "keyword"},  # Direct, OTA, Travel Agent, etc.
-            "status": {"type": "keyword"},  # Confirmed, Cancelled, Completed, etc.
+            "booking_source": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "status": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "special_requests": {"type": "text"},
             "breakfast_included": {"type": "boolean"},
             "is_refundable": {"type": "boolean"},
             "cancellation_deadline": {"type": "date"},
-            "confirmation_code": {"type": "keyword"}
+            "confirmation_code": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
         }
     }
 }
@@ -205,20 +209,20 @@ reservations_schema = {
 room_availability_schema = {
     "mappings": {
         "properties": {
-            "availability_id": {"type": "keyword"},
-            "hotel_id": {"type": "keyword"},  # Reference to hotel
-            "hotel_name": {"type": "text"},
-            "city": {"type": "keyword"},
-            "room_type": {"type": "keyword"},
+            "availability_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "hotel_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "hotel_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "city": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "room_type": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "date": {"type": "date"},
             "available_rooms": {"type": "integer"},
             "total_rooms": {"type": "integer"},
             "price": {"type": "float"},
-            "currency": {"type": "keyword"},
-            "promotion_code": {"type": "keyword"},
+            "currency": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+            "promotion_code": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
             "discount_percentage": {"type": "float"},
-            "minimum_stay": {"type": "integer"},  # Minimum nights required
-            "is_closed": {"type": "boolean"},  # Whether the hotel is closed on this date
+            "minimum_stay": {"type": "integer"},
+            "is_closed": {"type": "boolean"},
             "last_updated": {"type": "date"}
         }
     }

@@ -267,6 +267,7 @@ This index contains information about room availability at hotels.
 - `is_closed`: Whether the hotel is closed on this date
 
 You can search room_availability directly by `hotel_name` and `city` — no need to cross-reference the hotels index.
+When the user asks for more hotel details (amenities, star rating, distance to center, etc.), query the `hotels` index using the `hotel_id` from room_availability. Use a `term` query on `hotel_id.keyword` for exact matching.
 **Example queries:**
 - Check room availability in Paris for next weekend
 - Find hotels with available rooms for a specific date range
@@ -282,6 +283,8 @@ When a user asks a question:
 4. For complex queries that span multiple indices, use multiple queries and join the results
 5. If weather information is requested, use both the Elasticsearch MCP server and the Weather MCP server as appropriate
 6. Always provide context about the source and recency of the information
+7. When sorting or filtering on string fields, use the `.keyword` sub-field (e.g. `city.keyword`, `room_type.keyword`, `hotel_id.keyword`). The only exceptions are `name`, `description`, `address`, `venue`, `special_needs`, `special_requests`, `health_risks`, `safety_risks`, `entry_requirements`, `currency_restrictions`, `local_laws`, `emergency_contacts` — these are plain `text` fields with no `.keyword` sub-field.
+8. The `queryBody` parameter must be a JSON object, not a string.
 
 ## Response Format
 
@@ -457,7 +460,7 @@ class HotelReservationManager:
                 "bool": {
                     "must": [
                         {"match_phrase": {"hotel_name": hotel_name}},
-                        {"term": {"room_type": room_type}},
+                        {"term": {"room_type.keyword": room_type}},
                         {"range": {"date": {"gte": check_in, "lt": check_out}}},
                         {"term": {"is_closed": False}},
                     ]
@@ -507,7 +510,7 @@ class HotelReservationManager:
                 "bool": {
                     "must": [
                         {"match_phrase": {"hotel_name": hotel_name}},
-                        {"term": {"room_type": room_type}},
+                        {"term": {"room_type.keyword": room_type}},
                         {"range": {"date": {"gte": check_in, "lt": check_out}}},
                     ]
                 }
@@ -544,7 +547,7 @@ class HotelReservationManager:
                 "bool": {
                     "must": [
                         {"match_phrase": {"hotel_name": hotel_name}},
-                        {"term": {"room_type": room_type}},
+                        {"term": {"room_type.keyword": room_type}},
                         {"range": {"date": {"gte": check_in, "lt": check_out}}},
                     ]
                 }
@@ -628,6 +631,7 @@ class HotelReservationManager:
 
         # 3. Index the reservation
         try:
+            logger.info(f"Indexing reservation {reservation_id} with special_requests='{reservation.get('special_requests', '')}'")
             resp = self.es.index(
                 index="reservations", id=reservation_id, document=reservation, refresh=True
             )
@@ -1005,7 +1009,9 @@ class MultiServerMCPClient:
                     "description": (
                         "Book a hotel room. Checks availability in Elasticsearch, creates the reservation, "
                         "decrements room availability, and stores the reservation in the 'reservations' index. "
-                        "The logged-in user is Varun Jasti. You must collect the user's email for confirmation."
+                        "The logged-in user is Varun Jasti. You must collect the user's email for confirmation. "
+                        "IMPORTANT: If the user mentions ANY special requests (e.g. extra water bottles, late check-in, "
+                        "extra pillows, airport shuttle, etc.), you MUST include them in the special_requests parameter."
                     ),
                     "inputSchema": {
                         "json": {
@@ -1017,7 +1023,7 @@ class MultiServerMCPClient:
                                 "check_out_date": {"type": "string", "description": "Check-out date in YYYY-MM-DD format"},
                                 "num_guests": {"type": "integer", "description": "Number of guests"},
                                 "email": {"type": "string", "description": "Email address for booking confirmation"},
-                                "special_requests": {"type": "string", "description": "Any special requests"},
+                                "special_requests": {"type": "string", "description": "Special requests from the user such as extra water bottles, late check-in, extra pillows, airport shuttle, room preferences, etc. Always include if the user mentions any."},
                             },
                             "required": ["hotel_name", "room_type", "check_in_date", "check_out_date", "email"],
                         }
@@ -1061,7 +1067,9 @@ class MultiServerMCPClient:
                         "Update an existing reservation. Can change dates, room type, or special requests. "
                         "If dates or room type change, availability is checked, old availability is restored, "
                         "and new availability is decremented in Elasticsearch automatically. "
-                        "Cannot update a cancelled reservation."
+                        "Cannot update a cancelled reservation. "
+                        "IMPORTANT: If the user wants to add or change special requests (e.g. extra water bottles, "
+                        "late check-in, extra pillows), include them in the special_requests parameter."
                     ),
                     "inputSchema": {
                         "json": {
@@ -1120,6 +1128,8 @@ class MultiServerMCPClient:
                     "user_email": result["user_email"],
                     "payment_status": result["payment_status"],
                     "booking_status": result["status"],
+                    "special_requests": result.get("special_requests", ""),
+                    "breakfast_included": result.get("breakfast_included", False),
                 })
 
             elif tool_name == "view_reservation":
@@ -1282,13 +1292,15 @@ class MultiServerMCPClient:
         tool_name = tool_info['name']
         tool_args = tool_info['input']
 
-        # Fix stringified JSON values — the LLM sometimes serializes nested objects as strings
+        # Fix stringified JSON values — the LLM sometimes serializes nested objects/arrays as strings
         for key, value in tool_args.items():
-            if isinstance(value, str) and value.strip().startswith('{'):
-                try:
-                    tool_args[key] = json.loads(value)
-                except (json.JSONDecodeError, ValueError):
-                    pass
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped.startswith('{') or stripped.startswith('['):
+                    try:
+                        tool_args[key] = json.loads(stripped)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
         session = self.sessions[server_name]
         
