@@ -109,7 +109,7 @@ export abstract class BaseMcpStack extends cdk.Stack {
       DD_SERVICE: `${props.mcpName}-mcp-server`,
       DD_ENV: 'demo',
       DD_SITE: 'datadoghq.com',
-      // Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+      // Disable AgentCore's built-in ADOT — using Datadog instead
       DISABLE_ADOT_OBSERVABILITY: 'true',
       ...props.environmentVariables
     };
