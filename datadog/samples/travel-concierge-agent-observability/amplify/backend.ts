@@ -1,6 +1,8 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { data } from './data/resource';
 import { CfnOutput } from 'aws-cdk-lib';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -16,6 +18,49 @@ const deploymentId = deploymentConfig.deploymentId;
 
 const backend = defineBackend({
   data,
+});
+
+// Create a Cognito Identity Pool for guest (unauthenticated) access
+// This gives the browser temporary IAM credentials to call AgentCore Runtime
+const identityPool = new cognito.CfnIdentityPool(backend.stack, 'GuestIdentityPool', {
+  allowUnauthenticatedIdentities: true,
+  identityPoolName: `concierge-guest-${deploymentId}`,
+});
+
+// IAM role for unauthenticated (guest) users
+const unauthRole = new iam.Role(backend.stack, 'GuestUnauthRole', {
+  assumedBy: new iam.FederatedPrincipal(
+    'cognito-identity.amazonaws.com',
+    {
+      StringEquals: { 'cognito-identity.amazonaws.com:aud': identityPool.ref },
+      'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': 'unauthenticated' },
+    },
+    'sts:AssumeRoleWithWebIdentity'
+  ),
+});
+
+// Grant guest users permission to invoke AgentCore Runtime
+unauthRole.addToPolicy(new iam.PolicyStatement({
+  actions: [
+    'bedrock-agentcore:InvokeRuntime',
+    'bedrock-agentcore:InvokeRuntimeWithResponseStream',
+  ],
+  resources: ['*'],
+}));
+
+// Attach the role to the identity pool
+new cognito.CfnIdentityPoolRoleAttachment(backend.stack, 'GuestRoleAttachment', {
+  identityPoolId: identityPool.ref,
+  roles: {
+    unauthenticated: unauthRole.roleArn,
+  },
+});
+
+// Export identity pool ID for the web UI
+new CfnOutput(backend.stack, 'IdentityPoolId', {
+  value: identityPool.ref,
+  exportName: `ConciergeAgent-${deploymentId}-IdentityPoolId`,
+  description: 'Cognito Identity Pool ID for guest access',
 });
 
 // Table exports with deployment ID

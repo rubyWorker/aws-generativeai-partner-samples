@@ -37,6 +37,21 @@ MEMORY_ID=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="MemoryId") | 
 GATEWAY_URL=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GatewayUrl") | .OutputValue // empty')
 GATEWAY_ID=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GatewayId") | .OutputValue // empty')
 
+# Get Identity Pool ID from Amplify backend stack
+echo "📊 Querying Amplify backend for Identity Pool ID..."
+AMPLIFY_OUTPUTS=$(aws cloudformation describe-stacks --region us-east-1 --query "Stacks[?contains(StackName,'amplify')].Outputs[]" --output json 2>/dev/null) || AMPLIFY_OUTPUTS="[]"
+IDENTITY_POOL_ID=$(echo "$AMPLIFY_OUTPUTS" | jq -r '.[] | select(.OutputKey=="IdentityPoolId") | .OutputValue // empty')
+
+# Fallback: try the ConciergeAgent export name
+if [[ -z "$IDENTITY_POOL_ID" ]]; then
+    IDENTITY_POOL_ID=$(aws cloudformation list-exports --region us-east-1 --query "Exports[?Name=='ConciergeAgent-${DEPLOYMENT_ID}-IdentityPoolId'].Value" --output text 2>/dev/null) || IDENTITY_POOL_ID=""
+fi
+
+if [[ -z "$IDENTITY_POOL_ID" ]]; then
+    echo "⚠️  Identity Pool ID not found. Deploy Amplify backend first (npx ampx sandbox or npx ampx deploy)."
+    echo "   You can manually set VITE_IDENTITY_POOL_ID in web-ui/.env.local after deployment."
+fi
+
 # Get Google Maps API key from SSM Parameter Store
 echo "📊 Fetching Google Maps API key from SSM..."
 GOOGLE_MAPS_API_KEY=$(aws ssm get-parameter --name "/concierge-agent/travel/google-maps-key" --query "Parameter.Value" --with-decryption --output text 2>/dev/null) || GOOGLE_MAPS_API_KEY=""
@@ -69,11 +84,20 @@ VITE_MEMORY_ID=${MEMORY_ID}
 VITE_GATEWAY_URL=${GATEWAY_URL}
 VITE_GATEWAY_ID=${GATEWAY_ID}
 
+# Cognito Identity Pool for guest access (AgentCore auth)
+VITE_IDENTITY_POOL_ID=${IDENTITY_POOL_ID}
+
 # Google Maps API Key
 VITE_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
 EOF
 
 echo "✅ Created web-ui/.env.local"
+
+if [[ -n "$IDENTITY_POOL_ID" ]]; then
+    echo "✅ Identity Pool ID: ${IDENTITY_POOL_ID}"
+else
+    echo "⚠️  Identity Pool ID not found — set VITE_IDENTITY_POOL_ID manually after Amplify deploy"
+fi
 
 if [[ -n "$GOOGLE_MAPS_API_KEY" ]]; then
     echo "✅ Google Maps API key loaded from SSM"

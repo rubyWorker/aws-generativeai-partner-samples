@@ -6,12 +6,121 @@ const AGENT_CONFIG = {
   AGENT_RUNTIME_ARN: import.meta.env.VITE_AGENT_RUNTIME_ARN || '',
   AGENT_ENDPOINT_NAME: import.meta.env.VITE_AGENT_ENDPOINT_NAME || 'DEFAULT',
   AWS_REGION: import.meta.env.VITE_AWS_REGION || 'us-east-1',
-  LOCAL_ENDPOINT: import.meta.env.VITE_LOCAL_ENDPOINT || '',
+  IDENTITY_POOL_ID: import.meta.env.VITE_IDENTITY_POOL_ID || '',
 };
 
-// Bedrock Agent Core endpoint - use localhost if configured, otherwise AWS
-const BEDROCK_AGENT_CORE_ENDPOINT_URL = AGENT_CONFIG.LOCAL_ENDPOINT || 
-  `https://bedrock-agentcore.${AGENT_CONFIG.AWS_REGION}.amazonaws.com`;
+// Bedrock Agent Core endpoint
+const BEDROCK_AGENT_CORE_ENDPOINT_URL = `https://bedrock-agentcore.${AGENT_CONFIG.AWS_REGION}.amazonaws.com`;
+
+// --- SigV4 signing utilities ---
+async function sha256Hash(data: string): Promise<ArrayBuffer> {
+  const encoder = new TextEncoder();
+  return crypto.subtle.digest('SHA-256', encoder.encode(data));
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmacSha256(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
+  const keyBuffer = key instanceof Uint8Array ? key.buffer as ArrayBuffer : key;
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBuffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data));
+}
+
+interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
+let cachedCredentials: { creds: AwsCredentials; expiry: number } | null = null;
+
+async function getGuestCredentials(): Promise<AwsCredentials> {
+  // Return cached if still valid (refresh 5 min before expiry)
+  if (cachedCredentials && Date.now() < cachedCredentials.expiry - 300000) {
+    return cachedCredentials.creds;
+  }
+
+  const region = AGENT_CONFIG.AWS_REGION;
+  const identityPoolId = AGENT_CONFIG.IDENTITY_POOL_ID;
+
+  // Step 1: Get identity ID
+  const idRes = await fetch(`https://cognito-identity.${region}.amazonaws.com/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityService.GetId',
+    },
+    body: JSON.stringify({ IdentityPoolId: identityPoolId }),
+  });
+  const { IdentityId } = await idRes.json();
+
+  // Step 2: Get credentials for identity
+  const credRes = await fetch(`https://cognito-identity.${region}.amazonaws.com/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityService.GetCredentialsForIdentity',
+    },
+    body: JSON.stringify({ IdentityId }),
+  });
+  const { Credentials } = await credRes.json();
+
+  const creds: AwsCredentials = {
+    accessKeyId: Credentials.AccessKeyId,
+    secretAccessKey: Credentials.SecretKey,
+    sessionToken: Credentials.SessionToken,
+  };
+
+  cachedCredentials = { creds, expiry: Credentials.Expiration * 1000 };
+  return creds;
+}
+
+async function signRequest(
+  method: string,
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  credentials: AwsCredentials,
+  region: string,
+  service: string,
+): Promise<void> {
+  const parsedUrl = new URL(url);
+  const datetime = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const date = datetime.slice(0, 8);
+
+  headers['x-amz-date'] = datetime;
+  headers['host'] = parsedUrl.host;
+  if (credentials.sessionToken) {
+    headers['x-amz-security-token'] = credentials.sessionToken;
+  }
+
+  const signedHeaderKeys = Object.keys(headers).map(k => k.toLowerCase()).sort();
+  const signedHeaders = signedHeaderKeys.join(';');
+  const canonicalHeaders = signedHeaderKeys
+    .map(k => `${k}:${headers[Object.keys(headers).find(h => h.toLowerCase() === k)!]}`)
+    .join('\n') + '\n';
+
+  const payloadHash = toHex(await sha256Hash(body));
+
+  const canonicalRequest = [
+    method, parsedUrl.pathname, parsedUrl.searchParams.toString(),
+    canonicalHeaders, signedHeaders, payloadHash,
+  ].join('\n');
+
+  const scope = `${date}/${region}/${service}/aws4_request`;
+  const stringToSign = ['AWS4-HMAC-SHA256', datetime, scope, toHex(await sha256Hash(canonicalRequest))].join('\n');
+
+  const enc = new TextEncoder();
+  const kDate = await hmacSha256(enc.encode(`AWS4${credentials.secretAccessKey}`), date);
+  const kRegion = await hmacSha256(kDate, region);
+  const kService = await hmacSha256(kRegion, service);
+  const kSigning = await hmacSha256(kService, 'aws4_request');
+  const signature = toHex(await hmacSha256(kSigning, stringToSign));
+
+  headers['Authorization'] = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+}
 
 export interface ChatMessage {
   id: string;
@@ -79,11 +188,12 @@ export const invokeAgentCore = async (
     // Generate a proper trace ID
     const traceId = `1-${Math.floor(Date.now() / 1000).toString(16)}-${generateId()}`;
     
-    // Set up headers (no auth — runtime accepts unauthenticated requests)
-    const headers = {
+    // Set up headers and sign with SigV4 using Cognito guest credentials
+    const headers: Record<string, string> = {
       "X-Amzn-Trace-Id": traceId,
       "Content-Type": "application/json",
-      "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": sessionId
+      "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": sessionId,
+      "Accept": "application/json, text/event-stream",
     };
 
     // Create the payload
@@ -93,19 +203,40 @@ export const invokeAgentCore = async (
       session_id: sessionId
     };
 
+    const bodyStr = JSON.stringify(payload);
+
+    // Sign the request with SigV4 using Cognito guest credentials
+    if (!AGENT_CONFIG.IDENTITY_POOL_ID) {
+      throw new Error(
+        'VITE_IDENTITY_POOL_ID is not configured. Deploy the Amplify backend first, ' +
+        'then run ./scripts/setup-web-ui-env.sh --force to update your .env.local.'
+      );
+    }
+    if (AGENT_CONFIG.IDENTITY_POOL_ID === 'REPLACE_AFTER_AMPLIFY_DEPLOY') {
+      throw new Error(
+        'VITE_IDENTITY_POOL_ID is still set to the placeholder value. Deploy the Amplify backend first ' +
+        '(npx ampx sandbox or npx ampx deploy), then update VITE_IDENTITY_POOL_ID in web-ui/.env.local ' +
+        'with the Identity Pool ID from the CloudFormation outputs.'
+      );
+    }
+    const creds = await getGuestCredentials();
+    await signRequest('POST', url, headers, bodyStr, creds, AGENT_CONFIG.AWS_REGION, 'bedrock-agentcore');
+
     console.log('Agent Core Payload:', payload);
 
     // Make HTTP request with streaming
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
+      body: bodyStr,
     });
 
     console.log(`Response Status: ${response.status}`);
+    console.log(`Response Headers:`, Object.fromEntries(response.headers.entries()));
     
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`❌ HTTP Error ${response.status}:`, errorText);
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
@@ -457,14 +588,17 @@ export const invokeAgentCore = async (
       completion,
     };
   } catch (error) {
-    console.error('Error invoking agent core:', error);
+    console.error('❌ Error invoking agent core:', error);
+    console.error('❌ Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error as object), 2));
+    
+    const errorMessage = error instanceof Error ? error.message : String(error);
     
     setAnswers((prevState) => [
       ...prevState,
       {
         id: generateId(),
         role: 'assistant',
-        content: 'Sorry, I encountered an error processing your message. Please try again.',
+        content: `Error: ${errorMessage}`,
         isStreaming: false,
       },
     ]);
