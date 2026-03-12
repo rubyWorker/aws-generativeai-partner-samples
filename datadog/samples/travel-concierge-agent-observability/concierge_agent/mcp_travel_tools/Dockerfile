@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -44,5 +47,5 @@ ENV DISABLE_ADOT_OBSERVABILITY=true
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl --fail http://localhost:8000/health || exit 1
 
-# Run the MCP server
-CMD ["ddtrace-run", "python", "server.py"]
+# Run the MCP server — entrypoint resolves DD_API_KEY before ddtrace-run
+CMD ["bash", "entrypoint.sh"]
