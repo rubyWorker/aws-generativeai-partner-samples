@@ -20,13 +20,13 @@ The system uses a supervisor pattern: a Strands Agent (Claude Sonnet 4.5) delega
 For the full architecture diagram with Mermaid diagrams, trace flow, and span hierarchy, see **[docs/architecture.md](docs/architecture.md)**.
 
 ```
-User → Web UI → AgentCore Runtime (Supervisor + ddtrace)
-                        │
-                        ├── travel_assistant → AgentCore Gateway → Travel MCP Server (ddtrace)
-                        └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (ddtrace)
-                                                                          │
-                                                                    Amazon Bedrock
-                                                                   (Claude Sonnet 4.5)
+User → Web UI → (SigV4 via Cognito guest creds) → AgentCore Runtime (Supervisor + ddtrace)
+                                                          │
+                                                          ├── travel_assistant → AgentCore Gateway → Travel MCP Server (ddtrace)
+                                                          └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (ddtrace)
+                                                                                                           │
+                                                                                                     Amazon Bedrock
+                                                                                                    (Claude Sonnet 4.5)
 
         All services ──(agentless)──→ Datadog APM + LLM Observability
 ```
@@ -60,7 +60,7 @@ aws secretsmanager describe-secret --secret-id datadog/aig-agent/app-key
 npm install
 cd amplify && npm install && cd ..
 
-# 2. Deploy Amplify backend (DynamoDB, AppSync)
+# 2. Deploy Amplify backend (DynamoDB, AppSync, Cognito Identity Pool)
 npm run deploy:amplify
 
 # 3. Deploy MCP servers (Travel, Itinerary — each with ddtrace)
@@ -69,11 +69,31 @@ npm run deploy:mcp
 # 4. Deploy supervisor agent (with ddtrace + Datadog env vars)
 npm run deploy:agent
 
-# 5. Start local dev server
+# 5. Configure web UI environment (auto-populates from CloudFormation outputs)
+./scripts/setup-web-ui-env.sh --force
+
+# 6. Start local dev server
 npm run dev
 ```
 
 Access the application at `https://localhost:9000/`
+
+### Cognito Guest Access (AgentCore Auth)
+
+The web UI calls AgentCore Runtime directly from the browser using SigV4-signed requests. Temporary AWS credentials are obtained via a Cognito Identity Pool configured for unauthenticated (guest) access.
+
+The Amplify backend (`amplify/backend.ts`) creates:
+- A **Cognito Identity Pool** with `allowUnauthenticatedIdentities: true`
+- An **IAM role** for guest users with `bedrock-agentcore:InvokeRuntime` and `bedrock-agentcore:InvokeRuntimeWithResponseStream` permissions
+- A **role attachment** mapping the unauthenticated role to the identity pool
+
+After deploying the Amplify backend, the Identity Pool ID must be set in `web-ui/.env.local`:
+
+```bash
+VITE_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+Running `./scripts/setup-web-ui-env.sh --force` will auto-populate this from CloudFormation outputs.
 
 ### Datadog Environment Variables
 
@@ -130,7 +150,7 @@ travel-concierge-agent-observability/
 │   ├── mcp-servers/               # CDK for MCP server runtimes
 │   └── frontend-stack/            # CDK for web UI hosting
 ├── web-ui/                        # React frontend (Amplify)
-├── amplify/                       # Amplify backend (DynamoDB, GraphQL)
+├── amplify/                       # Amplify backend (DynamoDB, GraphQL, Cognito Identity Pool)
 ├── docs/
 │   ├── architecture.md            # Mermaid architecture diagrams
 │   └── troubleshooting-guide.md   # 3 debugging scenarios with Datadog
