@@ -16,7 +16,8 @@ ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Datadog LLM Observability
+# Datadog LLM Observability via OTEL
+# strands-agents[otel] emits OTEL spans; ddtrace-run captures them for Datadog
 ENV DD_TRACE_ENABLED=true
 ENV DD_LLMOBS_ENABLED=1
 ENV DD_LLMOBS_AGENTLESS_ENABLED=1
@@ -25,7 +26,7 @@ ENV DD_SERVICE=supervisor-agent
 ENV DD_ENV=demo
 ENV DD_SITE=datadoghq.com
 
-# Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+# Disable AgentCore's built-in ADOT — using Datadog instead
 ENV DISABLE_ADOT_OBSERVABILITY=true
 
 # Copy application code
@@ -47,5 +48,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD pgrep -f "python agent.py" || exit 1
 
-# Run the agent — entrypoint resolves DD_API_KEY from Secrets Manager before ddtrace-run
+# Run the agent — entrypoint resolves DD_API_KEY then runs ddtrace-run
 CMD ["bash", "entrypoint.sh"]

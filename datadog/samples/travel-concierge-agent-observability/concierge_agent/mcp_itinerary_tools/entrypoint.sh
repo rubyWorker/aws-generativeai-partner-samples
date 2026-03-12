@@ -1,5 +1,11 @@
 #!/bin/bash
-# Resolve DD_API_KEY from Secrets Manager before starting ddtrace-run
+# Entrypoint for MCP itinerary tools — Datadog-only observability via OTEL.
+#
+# How it works:
+# 1. ddtrace-run auto-instruments botocore/MCP calls and sends to Datadog LLM Observability
+# 2. DISABLE_ADOT_OBSERVABILITY=true prevents AgentCore's ADOT from conflicting
+#
+# Resolves DD_API_KEY from Secrets Manager before starting.
 
 if [ -n "$DD_API_KEY_SECRET_ARN" ] && [ -z "$DD_API_KEY" ]; then
     echo "Resolving DD_API_KEY from Secrets Manager..."

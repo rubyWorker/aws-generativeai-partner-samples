@@ -31,7 +31,8 @@ USER appuser
 # Expose port for MCP server
 EXPOSE 8000
 
-# Datadog LLM Observability
+# Datadog LLM Observability via OTEL
+# ddtrace-run auto-instruments botocore/MCP calls for Datadog
 ENV DD_TRACE_ENABLED=true
 ENV DD_LLMOBS_ENABLED=1
 ENV DD_LLMOBS_AGENTLESS_ENABLED=1
@@ -40,12 +41,12 @@ ENV DD_SERVICE=itinerary-mcp-server
 ENV DD_ENV=demo
 ENV DD_SITE=datadoghq.com
 
-# Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+# Disable AgentCore's built-in ADOT — using Datadog instead
 ENV DISABLE_ADOT_OBSERVABILITY=true
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the MCP server — entrypoint resolves DD_API_KEY before ddtrace-run
+# Run the MCP server — entrypoint resolves DD_API_KEY then runs ddtrace-run
 CMD ["bash", "entrypoint.sh"]

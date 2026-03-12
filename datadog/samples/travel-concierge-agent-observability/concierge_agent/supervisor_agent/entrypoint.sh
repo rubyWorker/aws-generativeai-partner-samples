@@ -1,6 +1,12 @@
 #!/bin/bash
-# Resolve DD_API_KEY from Secrets Manager before starting ddtrace-run
-# This ensures the API key is available as an env var when ddtrace initializes
+# Entrypoint for supervisor agent — Datadog-only observability via OTEL.
+#
+# How it works:
+# 1. strands-agents[otel] makes Strands emit OTEL-compliant spans
+# 2. ddtrace-run auto-instruments those spans and sends to Datadog LLM Observability
+# 3. DISABLE_ADOT_OBSERVABILITY=true prevents AgentCore's ADOT from conflicting
+#
+# Resolves DD_API_KEY from Secrets Manager before starting.
 
 if [ -n "$DD_API_KEY_SECRET_ARN" ] && [ -z "$DD_API_KEY" ]; then
     echo "Resolving DD_API_KEY from Secrets Manager..."

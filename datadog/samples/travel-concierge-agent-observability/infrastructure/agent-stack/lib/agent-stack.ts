@@ -120,7 +120,7 @@ export class AgentStack extends cdk.Stack {
       DD_SERVICE: 'supervisor-agent',
       DD_ENV: 'demo',
       DD_SITE: 'datadoghq.com',
-      // Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+      // Disable AgentCore's built-in ADOT — using Datadog instead
       DISABLE_ADOT_OBSERVABILITY: 'true',
     };
 

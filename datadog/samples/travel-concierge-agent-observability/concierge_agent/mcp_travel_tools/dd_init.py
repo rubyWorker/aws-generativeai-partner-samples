@@ -1,7 +1,11 @@
 """
 Datadog LLM Observability initialization.
 
-Resolves DD_API_KEY from Secrets Manager and enables LLM Observability.
+AgentCore integration approach:
+- DISABLE_ADOT_OBSERVABILITY=true disables AgentCore's built-in ADOT/CloudWatch pipeline
+- ddtrace auto-instruments botocore/MCP calls and sends to Datadog LLM Observability
+- DD_API_KEY is resolved from Secrets Manager at startup (via entrypoint.sh and here as backup)
+
 Must be imported FIRST in every Python entry point (before any other imports).
 """
 import os
@@ -26,7 +30,7 @@ def _resolve_dd_api_key():
 
 
 def _enable_llmobs():
-    """Enable Datadog LLM Observability after API key is available."""
+    """Enable Datadog LLM Observability."""
     try:
         from ddtrace.llmobs import LLMObs
         LLMObs.enable()
@@ -35,6 +39,5 @@ def _enable_llmobs():
         logger.error(f"Failed to enable LLM Observability: {e}")
 
 
-# Resolve API key first, then enable LLMObs
 _resolve_dd_api_key()
 _enable_llmobs()
