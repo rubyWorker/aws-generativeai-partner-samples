@@ -21,9 +21,6 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
     travelInterests: [] as string[],
     accommodationType: 'hotels',
     travelStyle: 'balanced',
-    shoppingCategories: [] as string[],
-    priceRange: '50-200',
-    sustainablePreference: false,
     notifications: true,
     emailUpdates: true
   })
@@ -33,26 +30,12 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
     'Art & Museums', 'Nightlife', 'Shopping', 'Beach', 'Mountains'
   ]
 
-  const shoppingCategoryOptions = [
-    'Electronics', 'Outdoor Gear', 'Fashion', 'Home & Garden', 
-    'Books', 'Health & Beauty', 'Sports', 'Photography', 'Travel Gear'
-  ]
-
   const handleInterestToggle = (interest: string) => {
     setFormData(prev => ({
       ...prev,
       travelInterests: prev.travelInterests.includes(interest)
         ? prev.travelInterests.filter(i => i !== interest)
         : [...prev.travelInterests, interest]
-    }))
-  }
-
-  const handleCategoryToggle = (category: string) => {
-    setFormData(prev => ({
-      ...prev,
-      shoppingCategories: prev.shoppingCategories.includes(category)
-        ? prev.shoppingCategories.filter(c => c !== category)
-        : [...prev.shoppingCategories, category]
     }))
   }
 
@@ -65,11 +48,6 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
           interests: formData.travelInterests,
           accommodation_type: formData.accommodationType,
           travel_style: formData.travelStyle
-        },
-        shopping: {
-          categories: formData.shoppingCategories,
-          price_range: formData.priceRange,
-          sustainable_preference: formData.sustainablePreference
         },
         communication: {
           notifications: formData.notifications,
@@ -106,10 +84,10 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
           <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-2">
             <div 
               className="h-full bg-gradient-to-r from-blue-500 to-blue-700 rounded-full transition-all duration-300"
-              style={{ width: `${(step / 4) * 100}%` }}
+              style={{ width: `${(step / 3) * 100}%` }}
             ></div>
           </div>
-          <span className="text-xs text-gray-400 font-medium">Step {step} of 4</span>
+          <span className="text-xs text-gray-400 font-medium">Step {step} of 3</span>
         </div>
 
         {/* Content */}
@@ -198,56 +176,6 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
 
             {step === 3 && (
               <div className="pb-6">
-                <h3 className="text-base font-semibold text-gray-800 mb-4">Shopping Preferences</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Categories</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {shoppingCategoryOptions.map(category => (
-                        <label key={category} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={formData.shoppingCategories.includes(category)}
-                            onChange={() => handleCategoryToggle(category)}
-                            className="rounded"
-                          />
-                          {category}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Price Range</label>
-                    <select
-                      value={formData.priceRange}
-                      onChange={(e) => setFormData(prev => ({ ...prev, priceRange: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-blue-600"
-                    >
-                      <option value="0-50">$0 - $50</option>
-                      <option value="50-200">$50 - $200</option>
-                      <option value="200-500">$200 - $500</option>
-                      <option value="500+">$500+</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.sustainablePreference}
-                        onChange={(e) => setFormData(prev => ({ ...prev, sustainablePreference: e.target.checked }))}
-                        className="rounded"
-                      />
-                      Prefer sustainable/eco-friendly products
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {step === 4 && (
-              <div className="pb-6">
                 <h3 className="text-base font-semibold text-gray-800 mb-4">Communication Preferences</h3>
                 <div className="space-y-3">
                   <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
@@ -277,8 +205,6 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
                     <p><span className="font-medium text-gray-700">Name:</span> {formData.name}</p>
                     <p><span className="font-medium text-gray-700">Travel Budget:</span> {formData.travelBudget}</p>
                     <p><span className="font-medium text-gray-700">Travel Interests:</span> {formData.travelInterests.join(', ') || 'None selected'}</p>
-                    <p><span className="font-medium text-gray-700">Shopping Categories:</span> {formData.shoppingCategories.join(', ') || 'None selected'}</p>
-                    <p><span className="font-medium text-gray-700">Price Range:</span> ${formData.priceRange}</p>
                   </div>
                 </div>
               </div>
@@ -298,7 +224,7 @@ const UserOnboarding = ({ user, onComplete }: UserOnboardingProps) => {
             </button>
           )}
           
-          {step < 4 ? (
+          {step < 3 ? (
             <button 
               onClick={() => setStep(step + 1)}
               disabled={step === 1 && !formData.name.trim()}

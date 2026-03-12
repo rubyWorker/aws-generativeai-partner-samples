@@ -23,6 +23,10 @@ ENV DD_LLMOBS_AGENTLESS_ENABLED=1
 ENV DD_LLMOBS_ML_APP=travel-concierge-agent
 ENV DD_SERVICE=supervisor-agent
 ENV DD_ENV=demo
+ENV DD_SITE=datadoghq.com
+
+# Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+ENV DISABLE_ADOT_OBSERVABILITY=true
 
 # Copy application code
 COPY . .

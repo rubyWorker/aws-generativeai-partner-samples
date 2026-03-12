@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { getItineraryItems, deleteItineraryItem, type ItineraryItem } from '../services/itineraryService';
-import { getBookings, type BookingItem } from '../services/bookingsService';
 
 interface TabbedSidebarProps {
   user: any;
@@ -38,9 +37,8 @@ const getTimeOfDayOrder = (timeOfDay?: string): number => {
 };
 
 const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refreshTrigger }) => {
-  const [activeTab, setActiveTab] = useState<'itinerary' | 'hotels' | 'flights' | 'map' | 'bookings'>('itinerary');
+  const [activeTab, setActiveTab] = useState<'itinerary' | 'hotels' | 'flights' | 'map'>('itinerary');
   const [itineraryItems, setItineraryItems] = useState<ItineraryItem[]>([]);
-  const [bookings, setBookings] = useState<BookingItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<string>('');
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
@@ -67,58 +65,8 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
     }
   };
 
-  const loadBookings = async () => {
-    try {
-      const items = await getBookings(user.userId);
-      setBookings(items);
-    } catch (error) {
-      console.error('Error loading bookings:', error);
-    }
-  };
-
-  // Filter out purchased items (bookings) from Hotels/Flights tabs
-  // Bookings should only appear in Bookings tab
-  // Match by flight_id/hotel_id or by title as fallback
-  const purchasedFlightIds = new Set(bookings.filter(b => b.flight_id).map(b => b.flight_id));
-  const purchasedHotelIds = new Set(bookings.filter(b => b.hotel_id).map(b => b.hotel_id));
-  const purchasedTitles = new Set(bookings.map(b => b.title.trim().toLowerCase()));
-
-  const isItemPurchased = (item: ItineraryItem): boolean => {
-    // Check if item details contain flight_id or hotel_id that was purchased
-    const itemTitleLower = item.title.trim().toLowerCase();
-
-    // Match by title (primary - most reliable)
-    if (purchasedTitles.has(itemTitleLower)) {
-      return true;
-    }
-
-    // Match flights by flight_id in details
-    if (item.type === 'flight' && item.details) {
-      for (const flightId of purchasedFlightIds) {
-        if (item.details.includes(flightId!)) {
-          return true;
-        }
-      }
-    }
-
-    // Match hotels by hotel_id in details or location
-    if (item.type === 'hotel') {
-      for (const hotelId of purchasedHotelIds) {
-        if (item.details?.includes(hotelId!) || item.location?.includes(hotelId!)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  };
-
-  const hotelItems = itineraryItems.filter(item =>
-    item.type === 'hotel' && !isItemPurchased(item)
-  );
-  const flightItems = itineraryItems.filter(item =>
-    item.type === 'flight' && !isItemPurchased(item)
-  );
+  const hotelItems = itineraryItems.filter(item => item.type === 'hotel');
+  const flightItems = itineraryItems.filter(item => item.type === 'flight');
 
   // Group items by day, then by time_of_day within each day
   const groupedItems = itineraryItems.reduce((groups, item) => {
@@ -134,7 +82,6 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
 
   useEffect(() => {
     loadItinerary();
-    loadBookings();
   }, [user.userId]);
 
   // Refresh when a new assistant message completes (stops streaming)
@@ -143,16 +90,14 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
     if (completedAssistantCount > 0) {
       console.log('🔄 TabbedSidebar: Refreshing after assistant message completed');
       loadItinerary();
-      loadBookings();
     }
   }, [completedAssistantCount]);
 
-  // Refresh when refreshTrigger changes (triggered after purchase)
+  // Refresh when refreshTrigger changes
   useEffect(() => {
     if (refreshTrigger) {
-      console.log('🔄 TabbedSidebar: Refreshing itinerary and bookings after purchase')
+      console.log('🔄 TabbedSidebar: Refreshing itinerary')
       loadItinerary();
-      loadBookings();
     }
   }, [refreshTrigger]);
 
@@ -303,11 +248,6 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
         <TabButton tab="map" label="Map" icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-          </svg>
-        } />
-        <TabButton tab="bookings" label="Bookings" icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
           </svg>
         } />
       </div>
@@ -495,46 +435,6 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {activeTab === 'bookings' && (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">📅 Your Bookings</h3>
-            {bookings.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">No bookings yet. Complete a purchase to see your bookings here!</p>
-            ) : (
-              <div className="space-y-3">
-                {bookings.map((booking) => (
-                  <div key={booking.id} className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-                    <div className="flex items-start gap-3">
-                      <div className="text-2xl">{getIcon(booking.item_type)}</div>
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900">{booking.title}</div>
-                        <div className="text-sm text-gray-500 mt-1">
-                          {booking.item_type === 'flight' && booking.origin && booking.destination && (
-                            <span>{booking.origin} → {booking.destination}</span>
-                          )}
-                          {booking.item_type === 'hotel' && booking.city_code && (
-                            <span>{booking.city_code}</span>
-                          )}
-                          {booking.departure_date && <span> • {booking.departure_date}</span>}
-                        </div>
-                        {booking.purchase_date && (
-                          <div className="text-xs text-gray-400 mt-1">
-                            Purchased: {new Date(booking.purchase_date).toLocaleDateString()}
-                          </div>
-                        )}
-                        <div className="flex items-center justify-between mt-2">
-                          <span className="text-sm font-semibold text-[#1668e3]">{booking.price}</span>
-                          <span className="text-xs text-gray-400">Order: {booking.order_id}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </div>

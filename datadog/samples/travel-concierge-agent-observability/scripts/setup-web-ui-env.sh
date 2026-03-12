@@ -10,12 +10,9 @@ STACK_NAME="AgentStack-${DEPLOYMENT_ID}"
 
 # Parse flags
 FORCE=false
-MOCK_MODE=""
 for arg in "$@"; do
     case $arg in
         --force) FORCE=true ;;
-        --mock) MOCK_MODE="true" ;;
-        --no-mock) MOCK_MODE="false" ;;
     esac
 done
 
@@ -40,48 +37,16 @@ MEMORY_ID=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="MemoryId") | 
 GATEWAY_URL=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GatewayUrl") | .OutputValue // empty')
 GATEWAY_ID=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GatewayId") | .OutputValue // empty')
 
-# Get Visa Lambda proxy URL from VisaLambdaStack
-VISA_STACK_NAME="VisaLambdaStack-${DEPLOYMENT_ID}"
-echo "📊 Querying ${VISA_STACK_NAME}..."
-VISA_OUTPUTS=$(aws cloudformation describe-stacks --stack-name "$VISA_STACK_NAME" --region us-east-1 --query "Stacks[0].Outputs" --output json 2>/dev/null) || {
-    echo "⚠️  Could not query ${VISA_STACK_NAME}. Visa Lambda not deployed - using mock mode."
-    VISA_PROXY_URL=""
-}
-if [[ -n "$VISA_OUTPUTS" && "$VISA_OUTPUTS" != "null" ]]; then
-    VISA_PROXY_URL=$(echo "$VISA_OUTPUTS" | jq -r '.[] | select(.OutputKey=="VisaProxyApiUrl") | .OutputValue // empty')
-    # Remove trailing slash if present
-    VISA_PROXY_URL=${VISA_PROXY_URL%/}
-fi
-
-# Get Visa credentials from Secrets Manager
-echo "📊 Fetching Visa credentials from Secrets Manager..."
-VISA_API_KEY=$(aws secretsmanager get-secret-value --secret-id "visa/api-key" --query SecretString --output text 2>/dev/null) || VISA_API_KEY=""
-
 # Get Google Maps API key from SSM Parameter Store
 echo "📊 Fetching Google Maps API key from SSM..."
 GOOGLE_MAPS_API_KEY=$(aws ssm get-parameter --name "/concierge-agent/travel/google-maps-key" --query "Parameter.Value" --with-decryption --output text 2>/dev/null) || GOOGLE_MAPS_API_KEY=""
 
-# Read Amplify outputs
-if [[ ! -f "amplify_outputs.json" ]]; then
-    echo "❌ amplify_outputs.json not found. Deploy Amplify first."
-    exit 1
-fi
-
-REGION=$(jq -r '.custom.region // "us-east-1"' amplify_outputs.json)
-USER_POOL_ID=$(jq -r '.auth.user_pool_id // empty' amplify_outputs.json)
-USER_POOL_CLIENT_ID=$(jq -r '.auth.user_pool_client_id // empty' amplify_outputs.json)
+REGION=${AWS_REGION:-us-east-1}
 
 # Validate required values
-if [[ -z "$RUNTIME_ARN" || -z "$USER_POOL_ID" || -z "$USER_POOL_CLIENT_ID" ]]; then
-    echo "❌ Missing required values. Ensure both stacks are deployed."
+if [[ -z "$RUNTIME_ARN" ]]; then
+    echo "❌ Missing required values. Ensure agent stack is deployed."
     exit 1
-fi
-
-# Determine mock mode: --mock flag overrides, otherwise default to false (real API)
-if [[ "$MOCK_MODE" == "true" ]]; then
-    FINAL_MOCK_MODE="true"
-else
-    FINAL_MOCK_MODE="false"
 fi
 
 # Generate .env.local
@@ -91,10 +56,6 @@ cat > web-ui/.env.local << EOF
 
 # AWS Configuration
 VITE_AWS_REGION=${REGION}
-
-# Cognito Configuration
-VITE_USER_POOL_ID=${USER_POOL_ID}
-VITE_USER_POOL_CLIENT_ID=${USER_POOL_CLIENT_ID}
 
 # Agent Runtime Configuration
 VITE_AGENT_RUNTIME_ARN=${RUNTIME_ARN}
@@ -108,32 +69,11 @@ VITE_MEMORY_ID=${MEMORY_ID}
 VITE_GATEWAY_URL=${GATEWAY_URL}
 VITE_GATEWAY_ID=${GATEWAY_ID}
 
-# Visa Integration (default: no-mock when proxy available, use --mock to override)
-VITE_VISA_MOCK_MODE=${FINAL_MOCK_MODE}
-VISA_INTEGRATION_ENABLED=true
-VITE_VISA_API_KEY=${VISA_API_KEY}
-VITE_VISA_CLIENT_APP_ID=VICTestAccountTR
-VITE_VISA_IFRAME_URL=https://sbx.vts.auth.visa.com
-VITE_VISA_PROXY_URL=${VISA_PROXY_URL}
-
 # Google Maps API Key
 VITE_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
 EOF
 
 echo "✅ Created web-ui/.env.local"
-
-if [[ -n "$VISA_PROXY_URL" ]]; then
-    echo "✅ Visa proxy URL configured: $VISA_PROXY_URL"
-    echo "   VITE_VISA_MOCK_MODE=false"
-else
-    echo "⚠️  Visa Lambda not deployed - using mock mode"
-fi
-
-if [[ -n "$VISA_API_KEY" ]]; then
-    echo "✅ Visa API key loaded from Secrets Manager"
-else
-    echo "⚠️  Visa API key not found in Secrets Manager (visa/api-key)"
-fi
 
 if [[ -n "$GOOGLE_MAPS_API_KEY" ]]; then
     echo "✅ Google Maps API key loaded from SSM"

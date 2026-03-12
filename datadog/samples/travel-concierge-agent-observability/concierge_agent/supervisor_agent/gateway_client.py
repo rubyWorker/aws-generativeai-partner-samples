@@ -38,7 +38,7 @@ def get_gateway_client(tool_filter_pattern: str, prefix: str = "gateway") -> MCP
     Get Gateway MCP client with specified tool filtering.
 
     Args:
-        tool_filter_pattern: Regex pattern to filter tools (e.g., "^carttools___")
+        tool_filter_pattern: Regex pattern to filter tools (e.g., "^traveltools___")
         prefix: Prefix for tool names (default: "gateway")
 
     Returns:

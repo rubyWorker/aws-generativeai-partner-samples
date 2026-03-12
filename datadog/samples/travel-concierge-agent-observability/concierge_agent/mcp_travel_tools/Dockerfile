@@ -2,12 +2,22 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Install system dependencies (curl needed for health check)
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \
@@ -25,10 +35,14 @@ ENV DD_LLMOBS_AGENTLESS_ENABLED=1
 ENV DD_LLMOBS_ML_APP=travel-concierge-agent
 ENV DD_SERVICE=travel-mcp-server
 ENV DD_ENV=demo
+ENV DD_SITE=datadoghq.com
+
+# Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+ENV DISABLE_ADOT_OBSERVABILITY=true
 
 # Add HEALTHCHECK 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl --fail http://localhost:8080/health || exit 1
+  CMD curl --fail http://localhost:8000/health || exit 1
 
 # Run the MCP server
 CMD ["ddtrace-run", "python", "server.py"]
