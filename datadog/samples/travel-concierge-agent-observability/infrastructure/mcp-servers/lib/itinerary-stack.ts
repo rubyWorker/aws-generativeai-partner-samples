@@ -32,7 +32,10 @@ export class ItineraryStack extends BaseMcpStack {
             'dynamodb:Scan'
           ],
           resources: [
-            `arn:aws:dynamodb:*:*:table/*`
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*Itinerary*`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*Itinerary*/index/*`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*UserProfile*`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*UserProfile*/index/*`,
           ]
         })
       ]

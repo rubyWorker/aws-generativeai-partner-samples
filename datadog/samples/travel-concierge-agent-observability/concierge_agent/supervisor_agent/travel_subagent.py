@@ -7,6 +7,7 @@ via the gateway. Exposed as a tool for the main supervisor agent.
 
 import os
 import logging
+from datetime import datetime
 from strands import Agent, tool
 from strands.models import BedrockModel
 from strands.tools.mcp import MCPClient
@@ -23,7 +24,7 @@ REGION = os.getenv("AWS_REGION", "us-east-1")
 
 TRAVEL_AGENT_PROMPT = """
 You are a travel assistant designed to help users plan trips and prepare for travel.
-For reference, today's date is December 3rd, 2025.
+For reference, today's date is {today_date}.
 
 Your primary responsibilities include:
 1. Providing destination information and itinerary recommendations
@@ -138,7 +139,9 @@ async def travel_assistant(query: str, user_id: str = "", session_id: str = ""):
             name="travel_agent",
             model=bedrock_model,
             tools=[travel_client],
-            system_prompt=TRAVEL_AGENT_PROMPT,
+            system_prompt=TRAVEL_AGENT_PROMPT.format(
+                today_date=datetime.now().strftime("%B %d, %Y")
+            ),
             trace_attributes={
                 "user.id": user_id,
                 "session.id": session_id,

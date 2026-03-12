@@ -7,13 +7,13 @@ End-to-end observability for a multi-agent AI travel concierge, powered by [Data
 ## What This Sample Demonstrates
 
 - **LLM Observability** — Every Bedrock LLM call (supervisor + subagents) is traced with prompts, completions, token usage, and latency via `ddtrace` auto-instrumentation of `botocore` and `strands-agents`
-- **APM Distributed Tracing** — A single user request produces a unified trace spanning `supervisor-agent` → `travel-mcp-server` / `cart-mcp-server` / `itinerary-mcp-server` → Amazon Bedrock
+- **APM Distributed Tracing** — A single user request produces a unified trace spanning `supervisor-agent` → `travel-mcp-server` / `itinerary-mcp-server` → Amazon Bedrock
 - **Agentless Collection** — All traces are sent directly to Datadog's intake API over HTTPS — no Datadog Agent sidecar required
 - **Troubleshooting Workflows** — Three documented scenarios showing how to debug slow tool calls, high token usage, and agent errors using Datadog's trace waterfall and LLM Observability views
 
 ## Architecture
 
-The system uses a supervisor pattern: a Strands Agent (Claude Sonnet 4.5) delegates to `travel_assistant` and `cart_manager` subagents, which invoke MCP tools via AgentCore Gateway connecting to three MCP servers.
+The system uses a supervisor pattern: a Strands Agent (Claude Sonnet 4.5) delegates to `travel_assistant` subagent, which invokes MCP tools via AgentCore Gateway connecting to MCP servers.
 
 ![Architecture Diagram](docs/architecture.md)
 
@@ -23,7 +23,6 @@ For the full architecture diagram with Mermaid diagrams, trace flow, and span hi
 User → Web UI → AgentCore Runtime (Supervisor + ddtrace)
                         │
                         ├── travel_assistant → AgentCore Gateway → Travel MCP Server (ddtrace)
-                        ├── cart_manager     → AgentCore Gateway → Cart MCP Server (ddtrace)
                         └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (ddtrace)
                                                                           │
                                                                     Amazon Bedrock
@@ -36,7 +35,7 @@ User → Web UI → AgentCore Runtime (Supervisor + ddtrace)
 
 | Requirement | Details |
 |-------------|---------|
-| **AWS Account** | With permissions for Bedrock AgentCore, Amplify, CDK, DynamoDB, Cognito, ECR, Secrets Manager |
+| **AWS Account** | With permissions for Bedrock AgentCore, Amplify, CDK, DynamoDB, ECR, Secrets Manager |
 | **Datadog Account** | With [LLM Observability](https://docs.datadoghq.com/llm_observability/) enabled |
 | **Secrets Manager Secrets** | `datadog/aig-agent/api-key` and `datadog/aig-agent/app-key` must exist in your AWS account |
 | **Node.js** | v18+ (v20 recommended) |
@@ -61,23 +60,20 @@ aws secretsmanager describe-secret --secret-id datadog/aig-agent/app-key
 npm install
 cd amplify && npm install && cd ..
 
-# 2. Deploy Amplify backend (Cognito, DynamoDB, AppSync)
+# 2. Deploy Amplify backend (DynamoDB, AppSync)
 npm run deploy:amplify
 
-# 3. Deploy MCP servers (Travel, Cart, Itinerary — each with ddtrace)
+# 3. Deploy MCP servers (Travel, Itinerary — each with ddtrace)
 npm run deploy:mcp
 
 # 4. Deploy supervisor agent (with ddtrace + Datadog env vars)
 npm run deploy:agent
 
-# 5. (Optional) Deploy Visa payment Lambda
-npm run deploy:visa-lambda
-
-# 6. Start local dev server
+# 5. Start local dev server
 npm run dev
 ```
 
-Access the application at `https://vcas.local.com:9000/`
+Access the application at `https://localhost:9000/`
 
 ### Datadog Environment Variables
 
@@ -90,9 +86,18 @@ ENV DD_LLMOBS_AGENTLESS_ENABLED=1
 ENV DD_LLMOBS_ML_APP=travel-concierge-agent
 ENV DD_SERVICE=supervisor-agent          # varies per container
 ENV DD_ENV=demo
+ENV DD_SITE=datadoghq.com
 ```
 
-The `DD_API_KEY` is injected at runtime from Secrets Manager. Each container's entrypoint is wrapped with `ddtrace-run`:
+AgentCore Runtime includes built-in ADOT (AWS Distro for OpenTelemetry) instrumentation. Since this sample uses Datadog's `ddtrace` instead, we disable ADOT to prevent conflicts:
+
+```dockerfile
+ENV DISABLE_ADOT_OBSERVABILITY=true
+```
+
+This is set in all Dockerfiles and CDK environment variables. See [AWS docs on using other observability platforms](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html) for details.
+
+The `DD_API_KEY` is injected at runtime from Secrets Manager via `dd_init.py` (imported first in each Python entry point). Each container's entrypoint is wrapped with `ddtrace-run`:
 
 ```dockerfile
 CMD ["ddtrace-run", "python", "agent.py"]   # supervisor
@@ -117,18 +122,15 @@ travel-concierge-agent-observability/
 │   │   ├── Dockerfile             # ddtrace-run entrypoint + DD_* env vars
 │   │   ├── agent.py               # Main agent with BedrockModel (Claude 4.5)
 │   │   ├── travel_subagent.py     # Travel planning subagent
-│   │   ├── cart_subagent.py       # Cart/payment subagent
 │   │   └── gateway_client.py      # MCP Gateway client (OAuth2)
 │   ├── mcp_travel_tools/          # Travel MCP server (ddtrace)
-│   ├── mcp_cart_tools/            # Cart MCP server (ddtrace)
 │   └── mcp_itinerary_tools/       # Itinerary MCP server (ddtrace)
 ├── infrastructure/
 │   ├── agent-stack/               # CDK for supervisor agent + gateway
 │   ├── mcp-servers/               # CDK for MCP server runtimes
-│   ├── frontend-stack/            # CDK for web UI hosting
-│   └── visa-lambda-stack/         # CDK for Visa payment Lambda
+│   └── frontend-stack/            # CDK for web UI hosting
 ├── web-ui/                        # React frontend (Amplify)
-├── amplify/                       # Amplify backend (Cognito, DynamoDB, GraphQL)
+├── amplify/                       # Amplify backend (DynamoDB, GraphQL)
 ├── docs/
 │   ├── architecture.md            # Mermaid architecture diagrams
 │   └── troubleshooting-guide.md   # 3 debugging scenarios with Datadog
@@ -153,7 +155,6 @@ travel-concierge-agent-observability/
 |---------|-----------|------------|-----------------|
 | Supervisor Agent | `concierge_agent/supervisor_agent` | `supervisor-agent` | `ddtrace-run` auto-patches `botocore` (Bedrock calls) + `strands-agents` (workflow spans) |
 | Travel MCP Server | `concierge_agent/mcp_travel_tools` | `travel-mcp-server` | `ddtrace-run` auto-patches `botocore` + `requests` (SerpAPI, Google Maps) |
-| Cart MCP Server | `concierge_agent/mcp_cart_tools` | `cart-mcp-server` | `ddtrace-run` auto-patches `botocore` (DynamoDB) |
 | Itinerary MCP Server | `concierge_agent/mcp_itinerary_tools` | `itinerary-mcp-server` | `ddtrace-run` auto-patches `botocore` (DynamoDB) |
 
 ## Cleanup

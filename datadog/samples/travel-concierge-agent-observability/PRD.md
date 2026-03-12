@@ -28,15 +28,13 @@ The travel-concierge-agent is a multi-agent system built with:
 - **Bedrock AgentCore Runtime** for containerized deployment
 - **MCP (Model Context Protocol)** tools via AgentCore Gateway
 - **Claude Sonnet 4.5** as the LLM backbone
-- **Supervisor pattern**: `agent.py` (supervisor) → `travel_subagent.py` + `cart_subagent.py` (subagents) → MCP tool servers (travel, cart, itinerary)
+- **Supervisor pattern**: `agent.py` (supervisor) → `travel_subagent.py` (subagent) → MCP tool servers (travel, itinerary)
 
 Key Python files:
 - `concierge_agent/supervisor_agent/agent.py` — Main supervisor agent entry point
 - `concierge_agent/supervisor_agent/travel_subagent.py` — Travel planning subagent
-- `concierge_agent/supervisor_agent/cart_subagent.py` — Cart/payment subagent
 - `concierge_agent/supervisor_agent/gateway_client.py` — MCP Gateway client
 - `concierge_agent/mcp_travel_tools/server.py` — MCP travel tools server
-- `concierge_agent/mcp_cart_tools/` — MCP cart tools server
 - `concierge_agent/mcp_itinerary_tools/` — MCP itinerary tools server
 - `infrastructure/agent-stack/` — CDK for supervisor agent deployment
 - `infrastructure/mcp-servers/` — CDK for MCP server deployment
@@ -116,7 +114,7 @@ This approach is minimally invasive — the core agent logic remains unchanged.
 **R1.1** Add `ddtrace` to `concierge_agent/supervisor_agent/requirements.txt`
 - Acceptance: `ddtrace>=2.10.0` present in requirements
 
-**R1.2** Add `ddtrace` to each MCP server's `requirements.txt` (`mcp_travel_tools/`, `mcp_cart_tools/`, `mcp_itinerary_tools/`)
+**R1.2** Add `ddtrace` to each MCP server's `requirements.txt` (`mcp_travel_tools/`, `mcp_itinerary_tools/`)
 - Acceptance: `ddtrace` present in all 3 MCP server requirements files
 
 **R1.3** Modify each Dockerfile to use `ddtrace-run` as the entrypoint wrapper
@@ -141,7 +139,7 @@ This approach is minimally invasive — the core agent logic remains unchanged.
 **R2.2** Supervisor agent workflow appears as a parent trace
 - Acceptance: Each user request creates a single trace with supervisor as root span
 
-**R2.3** Subagent calls (travel_subagent, cart_subagent) appear as child spans
+**R2.3** Subagent calls (travel_subagent) appear as child spans
 - Acceptance: Subagent spans are nested under supervisor span with `agent.type` tag
 
 **R2.4** MCP tool calls appear as tool spans within subagent traces
@@ -149,7 +147,7 @@ This approach is minimally invasive — the core agent logic remains unchanged.
 
 ### R3: APM Distributed Tracing (MEDIUM)
 
-**R3.1** Service map shows all services: `supervisor-agent`, `travel-mcp-server`, `cart-mcp-server`, `itinerary-mcp-server`
+**R3.1** Service map shows all services: `supervisor-agent`, `travel-mcp-server`, `itinerary-mcp-server`
 - Acceptance: Datadog Service Map renders connected services
 
 **R3.2** Trace context propagates across HTTP calls from agent → AgentCore Gateway → MCP servers
@@ -224,8 +222,6 @@ This approach is minimally invasive — the core agent logic remains unchanged.
 | `datadog/travel-concierge-agent-observability/concierge_agent/supervisor_agent/agent.py` | MODIFY | Add minimal LLMObs initialization if needed |
 | `datadog/travel-concierge-agent-observability/concierge_agent/mcp_travel_tools/requirements.txt` | MODIFY | Add `ddtrace>=2.10.0` |
 | `datadog/travel-concierge-agent-observability/concierge_agent/mcp_travel_tools/Dockerfile` | MODIFY | Wrap entrypoint with `ddtrace-run` |
-| `datadog/travel-concierge-agent-observability/concierge_agent/mcp_cart_tools/requirements.txt` | MODIFY | Add `ddtrace>=2.10.0` |
-| `datadog/travel-concierge-agent-observability/concierge_agent/mcp_cart_tools/Dockerfile` | MODIFY | Wrap entrypoint with `ddtrace-run` |
 | `datadog/travel-concierge-agent-observability/concierge_agent/mcp_itinerary_tools/requirements.txt` | MODIFY | Add `ddtrace>=2.10.0` |
 | `datadog/travel-concierge-agent-observability/concierge_agent/mcp_itinerary_tools/Dockerfile` | MODIFY | Wrap entrypoint with `ddtrace-run` |
 | `datadog/travel-concierge-agent-observability/infrastructure/agent-stack/lib/agent-stack.ts` | MODIFY | Add DD_* env vars to runtime environment |
@@ -243,20 +239,19 @@ This approach is minimally invasive — the core agent logic remains unchanged.
                     │  │                                                 │ │
                     │  │  supervisor_agent                               │ │
                     │  │    ├── travel_subagent ──▶ BedrockModel (Claude)│ │
-                    │  │    ├── cart_subagent ────▶ BedrockModel (Claude)│ │
                     │  │    └── itinerary tools (via Gateway MCP client) │ │
                     │  └─────────────────────────────────────────────────┘ │
                     └──────────────┬───────────────────────────────────────┘
                                    │ AgentCore Gateway (MCP Protocol)
                     ┌──────────────┼──────────────────────┐
-                    ▼              ▼                      ▼
-            ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-            │ Travel MCP   │ │  Cart MCP    │ │ Itinerary MCP    │
-            │ Server       │ │  Server      │ │ Server           │
-            │ (ddtrace-run)│ │ (ddtrace-run)│ │ (ddtrace-run)    │
-            └──────┬───────┘ └──────┬───────┘ └──────┬───────────┘
-                   │                │                 │
-                   ▼                ▼                 ▼
+                    ▼                                    ▼
+            ┌──────────────┐                  ┌──────────────────┐
+            │ Travel MCP   │                  │ Itinerary MCP    │
+            │ Server       │                  │ Server           │
+            │ (ddtrace-run)│                  │ (ddtrace-run)    │
+            └──────┬───────┘                  └──────┬───────────┘
+                   │                                 │
+                   ▼                                 ▼
             ┌─────────────────────────────────────────────────┐
             │              Amazon Bedrock (Claude)             │
             └─────────────────────────────────────────────────┘
@@ -303,7 +298,7 @@ This approach is minimally invasive — the core agent logic remains unchanged.
 
 - **Upstream**: [amazon-bedrock-agentcore-samples](https://github.com/awslabs/amazon-bedrock-agentcore-samples) travel-concierge-agent (commit TBD)
 - **Datadog**: `ddtrace` Python library >= 2.10.0
-- **AWS**: Bedrock AgentCore access, Cognito, DynamoDB, ECR, CloudFormation
+- **AWS**: Bedrock AgentCore access, DynamoDB, ECR, CloudFormation
 - **Datadog Account**: LLM Observability + APM enabled (trial or paid)
 
 ---

@@ -33,12 +33,6 @@ export abstract class BaseMcpStack extends cdk.Stack {
     cdk.Tags.of(this).add('DeploymentId', DEPLOYMENT_ID);
     cdk.Tags.of(this).add('DeploymentName', deploymentConfig.deploymentName || DEPLOYMENT_ID);
 
-    // Import Cognito configuration from Amplify stack
-    const userPoolId = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Auth-UserPoolId`);
-    const cognitoRegion = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Auth-Region`);
-    const machineClientId = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Auth-MachineClientId`);
-    const cognitoDiscoveryUrl = `https://cognito-idp.${cognitoRegion}.amazonaws.com/${userPoolId}/.well-known/openid-configuration`;
-
     // Create execution role
     this.role = new iam.Role(this, 'Role', {
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -115,10 +109,12 @@ export abstract class BaseMcpStack extends cdk.Stack {
       DD_SERVICE: `${props.mcpName}-mcp-server`,
       DD_ENV: 'demo',
       DD_SITE: 'datadoghq.com',
+      // Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+      DISABLE_ADOT_OBSERVABILITY: 'true',
       ...props.environmentVariables
     };
 
-    // Create MCP Runtime with OAuth authentication
+    // Create MCP Runtime
     this.runtime = new agentcore.Runtime(this, 'Runtime', {
       runtimeName: sanitizeName(`${props.mcpName}_mcp_${this.stackName}`),
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromAsset(
@@ -127,12 +123,8 @@ export abstract class BaseMcpStack extends cdk.Stack {
       executionRole: this.role,
       protocolConfiguration: agentcore.ProtocolType.MCP,
       networkConfiguration: agentcore.RuntimeNetworkConfiguration.usingPublicNetwork(),
-      authorizerConfiguration: agentcore.RuntimeAuthorizerConfiguration.usingOAuth(
-        cognitoDiscoveryUrl,
-        machineClientId
-      ),
       environmentVariables: envVars,
-      description: `MCP Server: ${props.mcpName} (OAuth enabled)`
+      description: `MCP Server: ${props.mcpName}`
     });
 
     // Outputs

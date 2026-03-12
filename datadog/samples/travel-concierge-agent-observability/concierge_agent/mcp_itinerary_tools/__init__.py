@@ -1,6 +1,6 @@
 """
-Cart Manager Agent Module
+Itinerary Tools Module
 
-This module contains the cart management agent and related tools for handling
-e-commerce cart operations like adding, removing, and updating items.
+This module contains the itinerary management tools for handling
+travel itinerary operations.
 """

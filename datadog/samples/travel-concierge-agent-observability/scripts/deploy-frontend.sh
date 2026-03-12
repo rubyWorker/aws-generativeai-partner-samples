@@ -2,9 +2,7 @@
 set -e
 
 # Frontend deployment script for Vite app to Amplify Hosting
-# Usage: ./scripts/deploy-frontend.sh [--mock|--no-mock]
-#   --mock    : Use Visa mock mode (no real API calls)
-#   --no-mock : Use real Visa API via Lambda proxy
+# Usage: ./scripts/deploy-frontend.sh
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -13,15 +11,6 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}🚀 Deploying Frontend to Amplify${NC}\n"
-
-# Parse flags
-MOCK_FLAG=""
-for arg in "$@"; do
-    case $arg in
-        --mock) MOCK_FLAG="--mock" ;;
-        --no-mock) MOCK_FLAG="--no-mock" ;;
-    esac
-done
 
 # Get deployment ID from config
 DEPLOYMENT_ID=$(node -p "require('./deployment-config.json').deploymentId")
@@ -55,7 +44,7 @@ echo ""
 
 # Update environment configuration
 echo -e "${BLUE}Updating environment configuration...${NC}"
-./scripts/setup-web-ui-env.sh --force $MOCK_FLAG
+./scripts/setup-web-ui-env.sh --force
 echo ""
 
 # Build the frontend

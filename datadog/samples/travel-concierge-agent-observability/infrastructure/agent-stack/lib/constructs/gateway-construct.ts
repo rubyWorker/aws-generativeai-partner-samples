@@ -6,10 +6,6 @@ import { Construct } from 'constructs';
 export interface GatewayProps {
   gatewayName: string;
   mcpRuntimeArns: { name: string; arn: string }[];
-  cognitoClientId: string;
-  cognitoDiscoveryUrl: string;
-  oauthProviderArn: string;
-  oauthScope: string;
 }
 
 export class GatewayConstruct extends Construct {
@@ -71,30 +67,12 @@ export class GatewayConstruct extends Construct {
               ],
               resources: [`arn:aws:logs:${stack.region}:${stack.account}:log-group:/aws/bedrock-agentcore/*`],
             }),
-            // OAuth Provider access (for authenticating to MCP servers)
-            new iam.PolicyStatement({
-              sid: 'OAuthProviderAccess',
-              effect: iam.Effect.ALLOW,
-              actions: [
-                'bedrock-agentcore:GetOAuth2CredentialProvider',
-                'bedrock-agentcore:GetTokenVault',
-                'bedrock-agentcore:GetWorkloadAccessToken',  // Required for OAuth workload identity
-                'bedrock-agentcore:GetResourceOauth2Token',  // Required to get OAuth token from provider
-                'secretsmanager:GetSecretValue'
-              ],
-              resources: [
-                props.oauthProviderArn,
-                `arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:*`,
-                `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:workload-identity-directory/*`,
-                `arn:aws:bedrock-agentcore:${stack.region}:${stack.account}:token-vault/*`
-              ],
-            }),
           ],
         }),
       },
     });
 
-    // Create Gateway with JWT inbound auth
+    // Create Gateway with IAM auth
     this.gateway = new bedrockagentcore.CfnGateway(this, 'Gateway', {
       name: props.gatewayName,
       roleArn: gatewayRole.roleArn,
@@ -104,25 +82,17 @@ export class GatewayConstruct extends Construct {
           supportedVersions: ['2025-03-26']
         }
       },
-      authorizerType: 'CUSTOM_JWT',
-      authorizerConfiguration: {
-        customJwtAuthorizer: {
-          allowedClients: [props.cognitoClientId],
-          discoveryUrl: props.cognitoDiscoveryUrl
-        }
-      },
-      description: 'AgentCore Gateway with MCP protocol, JWT inbound auth, and OAuth outbound auth'
+      authorizerType: 'NONE',
+      description: 'AgentCore Gateway with MCP protocol and IAM auth'
     });
 
     this.gatewayArn = this.gateway.attrGatewayArn;
     this.gatewayId = this.gateway.attrGatewayIdentifier;
     this.gatewayUrl = this.gateway.attrGatewayUrl;
 
-    // Create targets for MCP servers only
-    // Note: Main runtime calls the gateway, not the other way around
+    // Create targets for MCP servers
     this.targets = [];
 
-    // MCP server targets with OAuth credentials
     props.mcpRuntimeArns.forEach((mcpRuntime, index) => {
       const mcpRuntimeUrl = this.constructRuntimeUrl(mcpRuntime.arn, stack.region);
       const mcpTarget = new bedrockagentcore.CfnGatewayTarget(this, `McpTarget${index}`, {
@@ -136,35 +106,18 @@ export class GatewayConstruct extends Construct {
             }
           }
         },
-        credentialProviderConfigurations: [{
-          credentialProviderType: 'OAUTH',
-          credentialProvider: {
-            oauthCredentialProvider: {
-              providerArn: props.oauthProviderArn,
-              scopes: [props.oauthScope]
-            }
-          }
-        }]
       });
       mcpTarget.addDependency(this.gateway);
       this.targets.push(mcpTarget);
     });
-
-    // Note: Outputs are created in the parent stack to avoid duplicate exports
   }
 
   /**
    * Constructs the runtime invocation URL with properly encoded ARN
-   * Format: https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{encoded-arn}/invocations
-   * 
-   * Note: ARN encoding is handled by CloudFormation Fn::Join with URL-encoded characters
    */
   private constructRuntimeUrl(runtimeArn: string, region: string): string {
-    // Use CloudFormation Fn::Join to construct URL with encoded ARN
-    // The ARN needs to be URL-encoded: : becomes %3A and / becomes %2F
     return cdk.Fn.join('', [
       `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/`,
-      // Split ARN by : and / and rejoin with encoded versions
       cdk.Fn.join('%2F', cdk.Fn.split('/', cdk.Fn.join('%3A', cdk.Fn.split(':', runtimeArn)))),
       '/invocations'
     ]);

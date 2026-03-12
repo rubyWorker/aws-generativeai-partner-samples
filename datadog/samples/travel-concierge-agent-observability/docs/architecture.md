@@ -12,23 +12,20 @@ graph TB
     subgraph AgentCore Runtime
         Supervisor[Supervisor Agent<br/>Strands Agent + ddtrace<br/><i>DD_SERVICE=supervisor-agent</i>]
         TravelSub[travel_assistant<br/>Strands Subagent]
-        CartSub[cart_manager<br/>Strands Subagent]
     end
 
     subgraph AgentCore Gateway
-        GW[Gateway<br/>OAuth2 + MCP Routing]
+        GW[Gateway<br/>IAM + MCP Routing]
     end
 
     subgraph MCP Servers — AgentCore Runtime
         TravelMCP[Travel MCP Server<br/>ddtrace<br/><i>DD_SERVICE=travel-mcp-server</i>]
-        CartMCP[Cart MCP Server<br/>ddtrace<br/><i>DD_SERVICE=cart-mcp-server</i>]
         ItineraryMCP[Itinerary MCP Server<br/>ddtrace<br/><i>DD_SERVICE=itinerary-mcp-server</i>]
     end
 
     subgraph AWS Services
         Bedrock[Amazon Bedrock<br/>Claude Sonnet 4.5]
-        DDB[(DynamoDB<br/>User Profiles · Carts · Itineraries)]
-        Cognito[Amazon Cognito<br/>Auth + OAuth2]
+        DDB[(DynamoDB<br/>User Profiles · Itineraries)]
         Memory[AgentCore Memory<br/>Session History]
     end
 
@@ -38,27 +35,20 @@ graph TB
     end
 
     User -->|HTTPS| WebUI
-    WebUI -->|JWT Auth| Supervisor
+    WebUI -->|API Key Auth| Supervisor
     Supervisor --> TravelSub
-    Supervisor --> CartSub
     Supervisor -->|Itinerary tools| GW
     TravelSub -->|travel tools| GW
-    CartSub -->|cart tools| GW
     GW -->|MCP/HTTP| TravelMCP
-    GW -->|MCP/HTTP| CartMCP
     GW -->|MCP/HTTP| ItineraryMCP
     Supervisor -->|InvokeModel| Bedrock
     TravelSub -->|InvokeModel| Bedrock
-    CartSub -->|InvokeModel| Bedrock
     TravelMCP --> DDB
-    CartMCP --> DDB
     ItineraryMCP --> DDB
     Supervisor --> Memory
-    WebUI --> Cognito
 
     Supervisor -.->|agentless traces| DDAPM
     TravelMCP -.->|agentless traces| DDAPM
-    CartMCP -.->|agentless traces| DDAPM
     ItineraryMCP -.->|agentless traces| DDAPM
     DDAPM --> DDLLM
 
@@ -68,9 +58,9 @@ graph TB
     classDef mcp fill:#0D652D,stroke:#0D652D,color:#fff
 
     class DDAPM,DDLLM dd
-    class Bedrock,DDB,Cognito,Memory aws
-    class Supervisor,TravelSub,CartSub agent
-    class TravelMCP,CartMCP,ItineraryMCP mcp
+    class Bedrock,DDB,Memory aws
+    class Supervisor,TravelSub agent
+    class TravelMCP,ItineraryMCP mcp
 ```
 
 ## Distributed Trace Flow
@@ -153,7 +143,6 @@ graph LR
     subgraph AgentCore Runtime Containers
         SA[supervisor-agent<br/>ddtrace-run python agent.py]
         T[travel-mcp-server<br/>ddtrace-run python server.py]
-        C[cart-mcp-server<br/>ddtrace-run python server.py]
         I[itinerary-mcp-server<br/>ddtrace-run python server.py]
     end
 
@@ -163,7 +152,6 @@ graph LR
 
     SA -->|HTTPS / DD_API_KEY| API
     T -->|HTTPS / DD_API_KEY| API
-    C -->|HTTPS / DD_API_KEY| API
     I -->|HTTPS / DD_API_KEY| API
 ```
 
@@ -189,21 +177,21 @@ In Datadog APM → Service Map, the deployed system renders as:
 ┌─────────────────────┐
 │   supervisor-agent   │
 │   (Strands Agent)    │
-└──────┬──────┬───────┘
-       │      │
-       │      └──────────────────────────────┐
-       │                                     │
-       ▼                                     ▼
-┌──────────────┐  ┌──────────────┐  ┌────────────────────┐
-│ travel-mcp-  │  │  cart-mcp-   │  │  itinerary-mcp-    │
-│   server     │  │   server     │  │     server         │
-└──────┬───────┘  └──────┬───────┘  └────────┬───────────┘
-       │                 │                   │
-       ▼                 ▼                   ▼
+└──────┬──────────────┘
+       │
+       ├──────────────────────────┐
+       │                          │
+       ▼                          ▼
+┌──────────────┐  ┌────────────────────┐
+│ travel-mcp-  │  │  itinerary-mcp-    │
+│   server     │  │     server         │
+└──────┬───────┘  └────────┬───────────┘
+       │                   │
+       ▼                   ▼
 ┌──────────────────────────────────────────────────────────┐
 │                    Amazon Bedrock                         │
 │                  Claude Sonnet 4.5                        │
 └──────────────────────────────────────────────────────────┘
 ```
 
-All four services share `DD_LLMOBS_ML_APP=travel-concierge-agent`, which groups them together in the Datadog LLM Observability UI for unified monitoring.
+All services share `DD_LLMOBS_ML_APP=travel-concierge-agent`, which groups them together in the Datadog LLM Observability UI for unified monitoring.

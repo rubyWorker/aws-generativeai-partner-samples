@@ -31,33 +31,7 @@ export interface ChatMessage {
     tool?: string;
     content?: string;  // Current streaming content
   };
-  // Purchase confirmation
-  purchaseConfirmation?: {
-    requires_confirmation: boolean;
-    cart_items: unknown[];
-    total_amount: string;
-    items_count: number;
-    payment_method: string;
-    message: string;
-  };
-  // UI actions for agent-driven buttons and interactions
-  ui_actions?: Array<{
-    type: 'show_button';
-    action: 'ADD_CARD' | 'CONFIRM_PURCHASE';
-    label?: string;
-    metadata?: Record<string, unknown>;
-  }>;
-  // Card check result from check_user_has_payment_card tool
-  card_check_result?: {
-    has_card: boolean;
-    has_primary: boolean;
-    has_backup: boolean;
-    card_info?: {
-      type: string;
-      last_four: string;
-      is_primary: boolean;
-    } | null;
-  };
+
 }
 
 export interface SubagentStep {
@@ -426,76 +400,7 @@ export const invokeAgentCore = async (
                   }
                 }
                 
-                // Handle toolResult (for purchase confirmation and ui_actions detection)
-                else if (chunkData.message?.content?.[0]?.toolResult) {
-                  const toolResult = chunkData.message.content[0].toolResult;
-                  if (toolResult.content && typeof toolResult.content === 'string') {
-                    try {
-                      const resultData = JSON.parse(toolResult.content);
 
-                      // Check for purchase confirmation
-                      if (resultData.requires_confirmation === true) {
-                        console.log('Purchase confirmation required detected');
-                        setAnswers((prevState) => {
-                          const newState = [...prevState];
-                          for (let i = newState.length - 1; i >= 0; i--) {
-                            if (newState[i].isStreaming) {
-                              newState[i] = {
-                                ...newState[i],
-                                purchaseConfirmation: resultData
-                              };
-                              break;
-                            }
-                          }
-                          return newState;
-                        });
-                      }
-
-                      // Check for ui_actions (agent-driven UI buttons)
-                      if (resultData.ui_actions && Array.isArray(resultData.ui_actions)) {
-                        console.log('UI actions detected:', resultData.ui_actions);
-                        setAnswers((prevState) => {
-                          const newState = [...prevState];
-                          for (let i = newState.length - 1; i >= 0; i--) {
-                            if (newState[i].isStreaming) {
-                              newState[i] = {
-                                ...newState[i],
-                                ui_actions: resultData.ui_actions
-                              };
-                              break;
-                            }
-                          }
-                          return newState;
-                        });
-                      }
-
-                      // Check for card check result from check_user_has_payment_card tool
-                      if (resultData.has_card !== undefined) {
-                        console.log('Card check result detected:', resultData);
-                        setAnswers((prevState) => {
-                          const newState = [...prevState];
-                          for (let i = newState.length - 1; i >= 0; i--) {
-                            if (newState[i].isStreaming) {
-                              newState[i] = {
-                                ...newState[i],
-                                card_check_result: {
-                                  has_card: resultData.has_card,
-                                  has_primary: resultData.has_primary,
-                                  has_backup: resultData.has_backup,
-                                  card_info: resultData.card_info || null
-                                }
-                              };
-                              break;
-                            }
-                          }
-                          return newState;
-                        });
-                      }
-                    } catch {
-                      // Not JSON or doesn't have metadata, continue
-                    }
-                  }
-                }
                 
               } catch (parseError) {
                 console.error('Error parsing streaming chunk:', parseError);

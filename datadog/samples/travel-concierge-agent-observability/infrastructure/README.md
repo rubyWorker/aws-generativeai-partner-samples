@@ -9,21 +9,19 @@ This directory contains three separate CDK applications that deploy the agent in
 ### 1. MCP Servers (`mcp-servers/`)
 
 Multiple MCP runtime stacks, each with:
-- **AgentCore Runtime** - Containerized MCP server with OAuth authentication
+- **AgentCore Runtime** - Containerized MCP server
 - **IAM Role** - Permissions for Bedrock models, CloudWatch, SSM parameters
 
 **Stacks deployed**:
 - **TravelStack** - Travel planning tools (weather, destinations, flights, hotels)
-- **CartStack** - Shopping cart and Visa payment integration
 - **ItineraryStack** - Itinerary management tools
 
 ### 2. Agent Stack (`agent-stack/`)
 
 Main supervisor agent infrastructure:
-- **AgentCore Runtime** - Supervisor agent with JWT authentication
+- **AgentCore Runtime** - Supervisor agent with IAM authentication
 - **Memory Resource** - Conversation persistence (short-term memory)
 - **AgentCore Gateway** - MCP protocol gateway connecting to all MCP servers
-- **OAuth2 Credential Provider** - Machine-to-machine authentication for gateway
 - **IAM Roles** - Permissions for DynamoDB, Bedrock, Memory, Gateway invocation
 - **SSM Parameters** - Gateway URL configuration
 
@@ -34,10 +32,7 @@ Web UI hosting infrastructure:
 - **GitHub Integration** - Automatic builds from repository
 - **Environment Variables** - Runtime configuration for agent connection
 
-**Note**: These stacks depend on the Amplify backend (Cognito, DynamoDB) deployed from the project root via `npm run deploy:amplify`.
-
-## Architecture
-![travel arch](../docs/Travel_Agent_VISA.jpg)
+**Note**: These stacks depend on the Amplify backend (DynamoDB) deployed from the project root via `npm run deploy:amplify`.
 
 ## Prerequisites
 
@@ -50,7 +45,7 @@ Web UI hosting infrastructure:
    ```bash
    npm run deploy:amplify
    ```
-   This creates Cognito, DynamoDB, and CloudFormation exports required by these stacks.
+   This creates DynamoDB tables and CloudFormation exports required by these stacks.
 
 3. **Node.js 18+** and npm installed
 
@@ -83,8 +78,6 @@ infrastructure/
 │   │   ├── agent-stack.ts    # Main stack definition
 │   │   └── constructs/
 │   │       └── gateway-construct.ts  # Gateway with MCP targets
-│   ├── lambdas/
-│   │   └── oauth-provider/   # Custom resource for OAuth setup
 │   ├── cdk.json
 │   └── package.json
 │
@@ -92,9 +85,8 @@ infrastructure/
 │   ├── lib/
 │   │   ├── base-mcp-stack.ts # Base class for MCP stacks
 │   │   ├── travel-stack.ts   # Travel tools
-│   │   ├── cart-stack.ts     # Cart & payment
 │   │   ├── itinerary-stack.ts # Itinerary management
-│   │   └── internet-search-stack.ts # Web search
+│   │   └── app.ts            # CDK app entry point
 │   ├── cdk.json
 │   └── package.json
 │
@@ -103,10 +95,6 @@ infrastructure/
 │   │   └── frontend-stack.ts
 │   ├── cdk.json
 │   └── package.json
-│
-├── certs/                    # Visa API certificates (optional)
-│   ├── server_mle_cert.pem
-│   └── mle_private_cert.pem
 │
 └── README.md                 # This file
 ```
@@ -127,7 +115,6 @@ Example: `TravelStack-default-RuntimeArn`
 - `GatewayUrl` - Gateway URL for MCP connections
 - `GatewayId` - Gateway ID
 - `GatewayArn` - Gateway ARN
-- `OAuthProviderArn` - OAuth provider ARN
 
 ### Frontend Stack
 - `AmplifyAppId` - Amplify app ID
@@ -140,30 +127,21 @@ Example: `TravelStack-default-RuntimeArn`
 These stacks import resources from the Amplify backend via CloudFormation exports:
 
 ```typescript
-// Import from Amplify stack
-const userPoolId = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Auth-UserPoolId`);
-const machineClientId = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Auth-MachineClientId`);
+// Import DynamoDB tables from Amplify stack
+const itineraryTableName = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Data-ItineraryTableName`);
 ```
 
 **Deployment order**:
 1. Amplify backend (from project root)
-2. MCP servers (imports Cognito config)
-3. Agent stack (imports Cognito, DynamoDB, MCP runtime ARNs)
+2. MCP servers
+3. Agent stack (imports DynamoDB tables, MCP runtime ARNs)
 4. Frontend stack (optional)
 
-### Authentication Flow
+### Authentication
 
-**User → Agent**:
-- Frontend authenticates with Cognito web client
-- Calls agent runtime with JWT token
-- Agent validates JWT against Cognito
-
-**Agent → Gateway → MCP Servers**:
-- Agent requests M2M token from Cognito
-- Agent calls gateway with M2M JWT
-- Gateway validates JWT and obtains OAuth token
-- Gateway calls MCP servers with OAuth token
-- MCP servers validate OAuth token
+- The gateway uses `authorizerType: NONE` for simplified demo access
+- The agent runtime uses IAM authentication
+- The frontend uses API key auth for the Amplify data layer (no user login required)
 
 ## Configuration
 
@@ -184,43 +162,23 @@ This allows multiple deployments in the same AWS account.
 
 **MCP Servers** automatically receive:
 - `AWS_REGION` - Current AWS region
+- Datadog observability variables
 
 **Agent Stack** automatically receives:
 - `MEMORY_ID` - Memory resource ID
 - `USER_PROFILE_TABLE_NAME` - DynamoDB table name
-- `WISHLIST_TABLE_NAME` - DynamoDB table name
 - `ITINERARY_TABLE_NAME` - DynamoDB table name
 - `FEEDBACK_TABLE_NAME` - DynamoDB table name
 - `DEPLOYMENT_ID` - Deployment identifier
-- `GATEWAY_CLIENT_ID` - Cognito machine client ID
-- `GATEWAY_USER_POOL_ID` - Cognito user pool ID
-- `GATEWAY_SCOPE` - OAuth scope
+- Datadog observability variables
 
 Gateway URL is stored in SSM Parameter Store at `/concierge-agent/{DEPLOYMENT_ID}/gateway-url`.
-
-## Updating Infrastructure
-
-### Update Agent Code
-
-```bash
-npm run deploy:agent
-```
-
-Rebuilds and deploys the supervisor agent container.
-
-### Update MCP Server Code
-
-```bash
-npm run deploy:mcp
-```
-
-Rebuilds and deploys all MCP server containers.
 
 ## Troubleshooting
 
 ### CloudFormation Export Not Found
 
-**Error**: `Export ConciergeAgent-default-Auth-UserPoolId not found`
+**Error**: `Export ConciergeAgent-default-Data-ItineraryTableName not found`
 
 **Solution**: Deploy Amplify backend first from project root:
 ```bash
@@ -254,13 +212,6 @@ aws cloudformation list-exports --query "Exports[?contains(Name, 'ConciergeAgent
      --gateway-identifier <GATEWAY_ID> \
      --exception-level DEBUG
    ```
-
-### MCP Authentication Failures
-
-**Solutions**:
-- Verify OAuth provider exists
-- Check M2M client scopes in Cognito
-- Ensure MCP servers use correct client ID
 
 ## Cleanup
 

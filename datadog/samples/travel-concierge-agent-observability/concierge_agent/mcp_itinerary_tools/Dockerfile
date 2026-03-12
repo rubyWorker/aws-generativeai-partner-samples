@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Set working directory
 WORKDIR /app
@@ -35,6 +35,10 @@ ENV DD_LLMOBS_AGENTLESS_ENABLED=1
 ENV DD_LLMOBS_ML_APP=travel-concierge-agent
 ENV DD_SERVICE=itinerary-mcp-server
 ENV DD_ENV=demo
+ENV DD_SITE=datadoghq.com
+
+# Disable AgentCore's built-in ADOT instrumentation to avoid conflicts with ddtrace
+ENV DISABLE_ADOT_OBSERVABILITY=true
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
