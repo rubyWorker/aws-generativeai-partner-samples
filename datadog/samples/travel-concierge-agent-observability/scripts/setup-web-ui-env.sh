@@ -41,10 +41,14 @@ GATEWAY_ID=$(echo "$CDK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GatewayId") 
 echo "📊 Querying Amplify backend for Identity Pool ID..."
 AMPLIFY_OUTPUTS=$(aws cloudformation describe-stacks --region us-east-1 --query "Stacks[?contains(StackName,'amplify')].Outputs[]" --output json 2>/dev/null) || AMPLIFY_OUTPUTS="[]"
 IDENTITY_POOL_ID=$(echo "$AMPLIFY_OUTPUTS" | jq -r '.[] | select(.OutputKey=="IdentityPoolId") | .OutputValue // empty')
+GUEST_ROLE_ARN=$(echo "$AMPLIFY_OUTPUTS" | jq -r '.[] | select(.OutputKey=="GuestRoleArn") | .OutputValue // empty')
 
 # Fallback: try the ConciergeAgent export name
 if [[ -z "$IDENTITY_POOL_ID" ]]; then
     IDENTITY_POOL_ID=$(aws cloudformation list-exports --region us-east-1 --query "Exports[?Name=='ConciergeAgent-${DEPLOYMENT_ID}-IdentityPoolId'].Value" --output text 2>/dev/null) || IDENTITY_POOL_ID=""
+fi
+if [[ -z "$GUEST_ROLE_ARN" ]]; then
+    GUEST_ROLE_ARN=$(aws cloudformation list-exports --region us-east-1 --query "Exports[?Name=='ConciergeAgent-${DEPLOYMENT_ID}-GuestRoleArn'].Value" --output text 2>/dev/null) || GUEST_ROLE_ARN=""
 fi
 
 if [[ -z "$IDENTITY_POOL_ID" ]]; then
@@ -86,6 +90,7 @@ VITE_GATEWAY_ID=${GATEWAY_ID}
 
 # Cognito Identity Pool for guest access (AgentCore auth)
 VITE_IDENTITY_POOL_ID=${IDENTITY_POOL_ID}
+VITE_GUEST_ROLE_ARN=${GUEST_ROLE_ARN}
 
 # Google Maps API Key
 VITE_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}

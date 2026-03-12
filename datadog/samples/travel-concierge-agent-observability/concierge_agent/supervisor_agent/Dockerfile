@@ -31,6 +31,9 @@ ENV DISABLE_ADOT_OBSERVABILITY=true
 # Copy application code
 COPY . .
 
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
 # Create non-root user
 RUN useradd -m -u 1000 bedrock_agentcore && \
     chown -R bedrock_agentcore:bedrock_agentcore /app
@@ -44,5 +47,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD pgrep -f "python agent.py" || exit 1
 
-# Run the agent
-CMD ["ddtrace-run", "python", "agent.py"]
+# Run the agent — entrypoint resolves DD_API_KEY from Secrets Manager before ddtrace-run
+CMD ["bash", "entrypoint.sh"]

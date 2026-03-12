@@ -7,6 +7,7 @@ const AGENT_CONFIG = {
   AGENT_ENDPOINT_NAME: import.meta.env.VITE_AGENT_ENDPOINT_NAME || 'DEFAULT',
   AWS_REGION: import.meta.env.VITE_AWS_REGION || 'us-east-1',
   IDENTITY_POOL_ID: import.meta.env.VITE_IDENTITY_POOL_ID || '',
+  GUEST_ROLE_ARN: import.meta.env.VITE_GUEST_ROLE_ARN || '',
 };
 
 // Bedrock Agent Core endpoint
@@ -54,27 +55,76 @@ async function getGuestCredentials(): Promise<AwsCredentials> {
     },
     body: JSON.stringify({ IdentityPoolId: identityPoolId }),
   });
-  const { IdentityId } = await idRes.json();
+  const idData = await idRes.json();
+  if (idData.__type) throw new Error(`Cognito GetId failed: ${idData.message || idData.__type}`);
+  const { IdentityId } = idData;
 
-  // Step 2: Get credentials for identity
-  const credRes = await fetch(`https://cognito-identity.${region}.amazonaws.com/`, {
+  // Step 2: Get OpenID token (basic/classic auth flow)
+  // This avoids the session policy restrictions of GetCredentialsForIdentity (enhanced flow)
+  const tokenRes = await fetch(`https://cognito-identity.${region}.amazonaws.com/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-amz-json-1.1',
-      'X-Amz-Target': 'AWSCognitoIdentityService.GetCredentialsForIdentity',
+      'X-Amz-Target': 'AWSCognitoIdentityService.GetOpenIdToken',
     },
     body: JSON.stringify({ IdentityId }),
   });
-  const { Credentials } = await credRes.json();
+  const tokenData = await tokenRes.json();
+  if (tokenData.__type) throw new Error(`Cognito GetOpenIdToken failed: ${tokenData.message || tokenData.__type}`);
+  const { Token } = tokenData;
 
-  const creds: AwsCredentials = {
-    accessKeyId: Credentials.AccessKeyId,
-    secretAccessKey: Credentials.SecretKey,
-    sessionToken: Credentials.SessionToken,
+  // Step 3: Assume the unauthenticated role via STS using the OpenID token
+  const stsParams = new URLSearchParams({
+    Action: 'AssumeRoleWithWebIdentity',
+    Version: '2011-06-15',
+    RoleArn: AGENT_CONFIG.GUEST_ROLE_ARN,
+    RoleSessionName: 'CognitoGuest',
+    WebIdentityToken: Token,
+    DurationSeconds: '3600',
+  });
+
+  const stsRes = await fetch(`https://sts.${region}.amazonaws.com/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: stsParams.toString(),
+  });
+  const stsText = await stsRes.text();
+
+  // Parse XML response from STS
+  const getXmlValue = (xml: string, tag: string): string => {
+    const match = xml.match(new RegExp(`<${tag}>([^<]+)</${tag}>`));
+    return match ? match[1] : '';
   };
 
-  cachedCredentials = { creds, expiry: Credentials.Expiration * 1000 };
+  if (stsText.includes('<Error>')) {
+    const code = getXmlValue(stsText, 'Code');
+    const message = getXmlValue(stsText, 'Message');
+    throw new Error(`STS AssumeRoleWithWebIdentity failed: ${code} - ${message}`);
+  }
+
+  const creds: AwsCredentials = {
+    accessKeyId: getXmlValue(stsText, 'AccessKeyId'),
+    secretAccessKey: getXmlValue(stsText, 'SecretAccessKey'),
+    sessionToken: getXmlValue(stsText, 'SessionToken'),
+  };
+
+  const expirationStr = getXmlValue(stsText, 'Expiration');
+  const expiry = expirationStr ? new Date(expirationStr).getTime() : Date.now() + 3600000;
+
+  cachedCredentials = { creds, expiry };
   return creds;
+}
+
+// URI-encode a string per RFC 3986 (as required by SigV4)
+function uriEncode(str: string, encodeSlash = true): string {
+  return str.split('').map(ch => {
+    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+        ch === '_' || ch === '-' || ch === '~' || ch === '.') {
+      return ch;
+    }
+    if (ch === '/' && !encodeSlash) return ch;
+    return '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0');
+  }).join('');
 }
 
 async function signRequest(
@@ -90,27 +140,50 @@ async function signRequest(
   const datetime = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
   const date = datetime.slice(0, 8);
 
-  headers['x-amz-date'] = datetime;
-  headers['host'] = parsedUrl.host;
+  // Build headers to sign — use lowercase keys throughout to avoid casing mismatches
+  const headersToSign: Record<string, string> = {};
+  headersToSign['host'] = parsedUrl.host;
+  headersToSign['x-amz-date'] = datetime;
   if (credentials.sessionToken) {
-    headers['x-amz-security-token'] = credentials.sessionToken;
+    headersToSign['x-amz-security-token'] = credentials.sessionToken;
   }
 
-  const signedHeaderKeys = Object.keys(headers).map(k => k.toLowerCase()).sort();
+  // Build sorted signed headers string
+  const signedHeaderKeys = Object.keys(headersToSign).sort();
   const signedHeaders = signedHeaderKeys.join(';');
   const canonicalHeaders = signedHeaderKeys
-    .map(k => `${k}:${headers[Object.keys(headers).find(h => h.toLowerCase() === k)!]}`)
+    .map(k => `${k}:${headersToSign[k].trim()}`)
     .join('\n') + '\n';
+
+  // Build canonical URI — each path segment must be URI-encoded, but '/' preserved
+  // parsedUrl.pathname already has the encoded ARN, but new URL() decodes %XX sequences,
+  // so we need to re-encode each segment individually
+  const canonicalUri = '/' + parsedUrl.pathname.slice(1).split('/').map(seg => uriEncode(seg, true)).join('/');
+
+  // Build canonical query string — params sorted by key, each key/value URI-encoded
+  const params = [...parsedUrl.searchParams.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const canonicalQueryString = params
+    .map(([k, v]) => `${uriEncode(k)}=${uriEncode(v)}`)
+    .join('&');
 
   const payloadHash = toHex(await sha256Hash(body));
 
   const canonicalRequest = [
-    method, parsedUrl.pathname, parsedUrl.searchParams.toString(),
-    canonicalHeaders, signedHeaders, payloadHash,
+    method,
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
   ].join('\n');
 
   const scope = `${date}/${region}/${service}/aws4_request`;
-  const stringToSign = ['AWS4-HMAC-SHA256', datetime, scope, toHex(await sha256Hash(canonicalRequest))].join('\n');
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    datetime,
+    scope,
+    toHex(await sha256Hash(canonicalRequest)),
+  ].join('\n');
 
   const enc = new TextEncoder();
   const kDate = await hmacSha256(enc.encode(`AWS4${credentials.secretAccessKey}`), date);
@@ -119,6 +192,11 @@ async function signRequest(
   const kSigning = await hmacSha256(kService, 'aws4_request');
   const signature = toHex(await hmacSha256(kSigning, stringToSign));
 
+  // Set the signing headers on the outgoing request headers object
+  headers['x-amz-date'] = datetime;
+  if (credentials.sessionToken) {
+    headers['x-amz-security-token'] = credentials.sessionToken;
+  }
   headers['Authorization'] = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 }
 
@@ -223,6 +301,9 @@ export const invokeAgentCore = async (
     await signRequest('POST', url, headers, bodyStr, creds, AGENT_CONFIG.AWS_REGION, 'bedrock-agentcore');
 
     console.log('Agent Core Payload:', payload);
+
+    // Remove host header — browsers set this automatically and reject manual overrides
+    delete headers['host'];
 
     // Make HTTP request with streaming
     const response = await fetch(url, {

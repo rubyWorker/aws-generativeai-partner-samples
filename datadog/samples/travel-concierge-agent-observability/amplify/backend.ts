@@ -22,8 +22,10 @@ const backend = defineBackend({
 
 // Create a Cognito Identity Pool for guest (unauthenticated) access
 // This gives the browser temporary IAM credentials to call AgentCore Runtime
+// allowClassicFlow enables basic auth flow so session policies don't restrict permissions
 const identityPool = new cognito.CfnIdentityPool(backend.stack, 'GuestIdentityPool', {
   allowUnauthenticatedIdentities: true,
+  allowClassicFlow: true,
   identityPoolName: `concierge-guest-${deploymentId}`,
 });
 
@@ -42,8 +44,8 @@ const unauthRole = new iam.Role(backend.stack, 'GuestUnauthRole', {
 // Grant guest users permission to invoke AgentCore Runtime
 unauthRole.addToPolicy(new iam.PolicyStatement({
   actions: [
-    'bedrock-agentcore:InvokeRuntime',
-    'bedrock-agentcore:InvokeRuntimeWithResponseStream',
+    'bedrock-agentcore:InvokeAgentRuntime',
+    'bedrock-agentcore:InvokeAgentRuntimeWithResponseStream',
   ],
   resources: ['*'],
 }));
@@ -56,11 +58,17 @@ new cognito.CfnIdentityPoolRoleAttachment(backend.stack, 'GuestRoleAttachment', 
   },
 });
 
-// Export identity pool ID for the web UI
+// Export identity pool ID and guest role ARN for the web UI
 new CfnOutput(backend.stack, 'IdentityPoolId', {
   value: identityPool.ref,
   exportName: `ConciergeAgent-${deploymentId}-IdentityPoolId`,
   description: 'Cognito Identity Pool ID for guest access',
+});
+
+new CfnOutput(backend.stack, 'GuestRoleArn', {
+  value: unauthRole.roleArn,
+  exportName: `ConciergeAgent-${deploymentId}-GuestRoleArn`,
+  description: 'IAM Role ARN for guest (unauthenticated) users',
 });
 
 // Table exports with deployment ID
