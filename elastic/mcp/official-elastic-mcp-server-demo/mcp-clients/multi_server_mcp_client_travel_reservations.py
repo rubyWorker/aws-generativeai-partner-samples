@@ -35,7 +35,7 @@ You are a travel advisory assistant that helps users find information about dest
 Current date is 9th March 2026.
 
 ## Logged-In User
-The currently logged-in user is **Varun Jasti** (user_id: USER_VJASTI). 
+The currently logged-in user is **Alex Demo** (user_id: USER004). 
 - Loyalty tier: Platinum, 15,000 points
 - Preferred currency: USD
 - You do NOT need to ask for the user's name or personal details — they are already known.
@@ -296,7 +296,7 @@ Structure your responses to include:
 4. Suggestions for follow-up questions or actions
 
 For hotel reservations or bookings:
-- The user is already logged in as Varun Jasti — do NOT ask for name or personal details.
+- The user is already logged in as Alex Demo — do NOT ask for name or personal details.
 - Only ask for the user's **email address** to send the booking confirmation.
 - Use the `book_room` tool to create the reservation. It checks the `room_availability` index, creates the reservation in the `reservations` index, and decrements `available_rooms` automatically.
 - After a successful booking, use the AWS SES MCP server to send a confirmation email.
@@ -326,9 +326,9 @@ Would you like more details about any of these hotels or help with booking?"
 
 **User:** "Book a Deluxe room at The Ritz Paris from March 15 to March 20"
 
-**Assistant:** "I'd be happy to book that for you, Varun! I just need your email address to send the confirmation."
+**Assistant:** "I'd be happy to book that for you, Alex! I just need your email address to send the confirmation."
 
-**User:** "varun@example.com"
+**User:** "alex@example.com"
 
 **Assistant:** *[Calls book_room tool → checks room_availability index → creates reservation in reservations index → decrements available_rooms]*
 
@@ -342,11 +342,11 @@ Check-out: March 20, 2026
 Total: €3,750.00
 Status: Confirmed
 
-I'll send a confirmation email to varun@example.com now."
+I'll send a confirmation email to alex@example.com now."
 
 **User:** "Show me my reservations"
 
-**Assistant:** *[Calls list_my_reservations tool → queries reservations index for USER_VJASTI]*
+**Assistant:** *[Calls list_my_reservations tool → queries reservations index for USER004]*
 
 Once you provide these details, I can search for available hotels that match your criteria."
 
@@ -426,9 +426,9 @@ class HotelReservationManager:
 
     # Hardcoded logged-in user
     CURRENT_USER = {
-        "user_id": "USER_VJASTI",
-        "first_name": "Varun",
-        "last_name": "Jasti",
+        "user_id": "USER004",
+        "first_name": "Alex",
+        "last_name": "Demo",
         "phone": "+1-555-987-6543",
         "nationality": "United States",
         "preferred_language": "English",
@@ -1009,7 +1009,7 @@ class MultiServerMCPClient:
                     "description": (
                         "Book a hotel room. Checks availability in Elasticsearch, creates the reservation, "
                         "decrements room availability, and stores the reservation in the 'reservations' index. "
-                        "The logged-in user is Varun Jasti. You must collect the user's email for confirmation. "
+                        "The logged-in user is Alex Demo. You must collect the user's email for confirmation. "
                         "IMPORTANT: If the user mentions ANY special requests (e.g. extra water bottles, late check-in, "
                         "extra pillows, airport shuttle, etc.), you MUST include them in the special_requests parameter."
                     ),
@@ -1091,7 +1091,7 @@ class MultiServerMCPClient:
             {
                 "toolSpec": {
                     "name": "list_my_reservations",
-                    "description": "List all reservations for the currently logged-in user (Varun Jasti).",
+                    "description": "List all reservations for the currently logged-in user.",
                     "inputSchema": {
                         "json": {
                             "type": "object",

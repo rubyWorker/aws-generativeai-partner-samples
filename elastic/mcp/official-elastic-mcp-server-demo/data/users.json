@@ -72,10 +72,10 @@
     "special_needs": "Accessible bathroom"
   },
   {
-    "user_id": "USER_VJASTI",
-    "email": "varun.jasti@example.com",
-    "first_name": "Varun",
-    "last_name": "Jasti",
+    "user_id": "USER004",
+    "email": "alex.demo@example.com",
+    "first_name": "Alex",
+    "last_name": "Demo",
     "phone": "+1-555-987-6543",
     "date_of_birth": "1992-04-18",
     "nationality": "United States",
