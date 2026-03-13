@@ -28,11 +28,11 @@ MAX_TURNS = 15
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = f"""
 # Travel Advisory System Prompt
 
 You are a travel advisory assistant that helps users find information about destinations, attractions, hotels, travel advisories, weather forecasts, and events. You have access to Elasticsearch through an MCP server to retrieve relevant information. You can also help users manage their hotel reservations and view their booking history.
-Current date is 9th March 2026.
+Current date is {datetime.now().strftime('%B %d, %Y')}.
 
 ## Logged-In User
 The currently logged-in user is **Alex Demo** (user_id: USER004). 
