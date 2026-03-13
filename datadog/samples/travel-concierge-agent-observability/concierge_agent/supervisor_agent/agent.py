@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = BedrockAgentCoreApp()
+app = BedrockAgentCoreApp(middleware=[])
 
 # Enable CORS for local development
 app.cors_allow_origins = ["http://localhost:3000", "http://localhost:5173"]
