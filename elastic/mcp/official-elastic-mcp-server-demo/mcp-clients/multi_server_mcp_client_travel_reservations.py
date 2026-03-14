@@ -2,10 +2,11 @@ import asyncio
 import sys
 from typing import Dict, List, Any, Optional
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import uuid
 import json
+import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -15,19 +16,51 @@ from mcp.client.stdio import stdio_client
 
 # to interact with Amazon Bedrock
 import boto3
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 # to interact with Elasticsearch directly
 from elasticsearch import Elasticsearch, helpers, exceptions
 
 # Constants
-MAX_TOKENS = 2000
+MAX_TOKENS = 4096
 MAX_TURNS = 15
 
-SYSTEM_PROMPT = """
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = f"""
 # Travel Advisory System Prompt
 
 You are a travel advisory assistant that helps users find information about destinations, attractions, hotels, travel advisories, weather forecasts, and events. You have access to Elasticsearch through an MCP server to retrieve relevant information. You can also help users manage their hotel reservations and view their booking history.
-Current date is 9th May 2025.
+Current date is {datetime.now().strftime('%B %d, %Y')}.
+
+## Logged-In User
+The currently logged-in user is **Alex Demo** (user_id: USER004). 
+- Loyalty tier: Platinum, 15,000 points
+- Preferred currency: USD
+- You do NOT need to ask for the user's name or personal details — they are already known.
+- When the user wants to book a room, the ONLY thing you need to ask for is their **email address** to send the confirmation.
+
+## Booking Flow
+When a user wants to book a hotel room:
+1. Confirm the hotel name, room type, check-in date, and check-out date (gather from conversation context if already discussed).
+2. Ask for the user's **email address** for the booking confirmation.
+3. Before booking, confirm the details with the user and mention that the **card on file** will be used for payment.
+4. Once you have all details and the user confirms, call the `book_room` tool to create the reservation. This tool checks availability, creates the reservation in Elasticsearch, and decrements room availability automatically.
+4. After a successful booking, use the AWS SES MCP `send-email` tool to send a confirmation email. IMPORTANT: Only pass `to`, `subject`, and `text` parameters. Do NOT pass `from`, `replyTo`, `cc`, or `bcc` — the sender is pre-configured on the server.
+5. If the booking fails (no availability), inform the user and suggest alternatives.
+
+## Reservation Management
+- `book_room`: Create a new reservation (checks availability, updates ES)
+- `view_reservation`: View reservation details by ID
+- `cancel_reservation`: Cancel a reservation (restores room availability in ES)
+- `list_my_reservations`: List all reservations for the current user
+
+## CRITICAL: Weather Queries
+When the user asks about weather, forecasts, or climate conditions for any location:
+1. For **US locations only**: Call the `get_forecast` MCP tool using the destination's latitude and longitude. Also call `get_alerts` with the state code to check for active weather alerts.
+2. For **non-US locations** (e.g., Paris, Tokyo, Bali): Use the Elasticsearch `weather` index directly — the NWS weather API only covers the United States.
+3. You can find latitude/longitude for destinations in the destinations index or use well-known coordinates.
 
 ## Available Elasticsearch Indices
 
@@ -125,7 +158,7 @@ This index contains travel advisories and safety information.
 - Check visa requirements for Japan
 
 ### 5. Weather Index
-Important: First use the Weather MCP tool to answer the questions. Only if that does not get the right information, then use this index contains weather forecasts for destinations.
+This index contains weather forecasts for all destinations. Use this index for non-US locations. For US locations, prefer the `get_forecast` and `get_alerts` MCP tools first, then fall back to this index if needed.
 
 **Key fields:**
 - `weather_id`: Unique identifier for the weather record
@@ -220,7 +253,9 @@ This index contains information about room availability at hotels.
 **Key fields:**
 - `availability_id`: Unique identifier for the availability record
 - `hotel_id`: Reference to the hotel
-- `room_type`: Type of room
+- `hotel_name`: Full name of the hotel
+- `city`: City where the hotel is located
+- `room_type`: Type of room (Standard, Deluxe, Suite)
 - `date`: Date for which availability is recorded
 - `available_rooms`: Number of available rooms
 - `total_rooms`: Total number of rooms of this type
@@ -231,7 +266,8 @@ This index contains information about room availability at hotels.
 - `minimum_stay`: Minimum number of nights required
 - `is_closed`: Whether the hotel is closed on this date
 
-When searching for Room availability for a specific hotel, first run a query on the `hotels` index based on hotel name, get the corresponding `hotel_id` and then use that `hotel_id` on this index to search.
+You can search room_availability directly by `hotel_name` and `city` — no need to cross-reference the hotels index.
+When the user asks for more hotel details (amenities, star rating, distance to center, etc.), query the `hotels` index using the `hotel_id` from room_availability. Use a `term` query on `hotel_id.keyword` for exact matching.
 **Example queries:**
 - Check room availability in Paris for next weekend
 - Find hotels with available rooms for a specific date range
@@ -247,6 +283,8 @@ When a user asks a question:
 4. For complex queries that span multiple indices, use multiple queries and join the results
 5. If weather information is requested, use both the Elasticsearch MCP server and the Weather MCP server as appropriate
 6. Always provide context about the source and recency of the information
+7. When sorting or filtering on string fields, use the `.keyword` sub-field (e.g. `city.keyword`, `room_type.keyword`, `hotel_id.keyword`). The only exceptions are `name`, `description`, `address`, `venue`, `special_needs`, `special_requests`, `health_risks`, `safety_risks`, `entry_requirements`, `currency_restrictions`, `local_laws`, `emergency_contacts` — these are plain `text` fields with no `.keyword` sub-field.
+8. The `queryBody` parameter must be a JSON object, not a string.
 
 ## Response Format
 
@@ -257,12 +295,13 @@ Structure your responses to include:
 3. Related information that might be helpful
 4. Suggestions for follow-up questions or actions
 
-For hotel reservations or bookings, guide the user through the process by asking for:
-- Destination
-- Check-in and check-out dates
-- Number of guests
-- Preferred amenities or location
-- Budget range
+For hotel reservations or bookings:
+- The user is already logged in as Alex Demo — do NOT ask for name or personal details.
+- Only ask for the user's **email address** to send the booking confirmation.
+- Use the `book_room` tool to create the reservation. It checks the `room_availability` index, creates the reservation in the `reservations` index, and decrements `available_rooms` automatically.
+- After a successful booking, use the AWS SES MCP server to send a confirmation email.
+- Use `list_my_reservations` to show the user's bookings from the `reservations` index.
+- Use `cancel_reservation` to cancel — it updates the `reservations` index and restores `available_rooms` in `room_availability`.
 
 ## Example Interactions
 
@@ -285,33 +324,29 @@ For hotel reservations or bookings, guide the user through the process by asking
 
 Would you like more details about any of these hotels or help with booking?"
 
-**User:** "Show me my upcoming reservations"
+**User:** "Book a Deluxe room at The Ritz Paris from March 15 to March 20"
 
-**Assistant:** *[Uses Elasticsearch to query the reservations index for the user's upcoming reservations]*
+**Assistant:** "I'd be happy to book that for you, Alex! I just need your email address to send the confirmation."
 
-"I found the following upcoming reservation for you:
+**User:** "alex@example.com"
 
-Reservation at Shangri-La Hotel, Paris
-Confirmation Code: CONF45678
-Check-in: June 15, 2025
-Check-out: June 20, 2025
-Room Type: Deluxe Room with Eiffel Tower View
-Guests: 2
-Total Price: €2,600 (Paid)
+**Assistant:** *[Calls book_room tool → checks room_availability index → creates reservation in reservations index → decrements available_rooms]*
 
-Would you like to modify this reservation or see more details?"
+"Your reservation is confirmed!
 
-**User:** "I'd like to book a hotel in Barcelona for next month"
+Confirmation Code: CONF8A3B2E
+Hotel: The Ritz Paris
+Room: Deluxe
+Check-in: March 15, 2026
+Check-out: March 20, 2026
+Total: €3,750.00
+Status: Confirmed
 
-**Assistant:** *[Uses Elasticsearch to check room availability in Barcelona]*
+I'll send a confirmation email to alex@example.com now."
 
-"I'd be happy to help you book a hotel in Barcelona. To find the best options for you, I need a few details:
+**User:** "Show me my reservations"
 
-1. What are your check-in and check-out dates?
-2. How many guests will be staying?
-3. Do you have any preferences for location (beach area, city center, etc.)?
-4. What's your budget range per night?
-5. Any specific amenities you're looking for (pool, spa, etc.)?
+**Assistant:** *[Calls list_my_reservations tool → queries reservations index for USER004]*
 
 Once you provide these details, I can search for available hotels that match your criteria."
 
@@ -320,6 +355,7 @@ Once you provide these details, I can search for available hotels that match you
 
 @dataclass
 class Message:
+    """Helper class for constructing Bedrock Converse API messages."""
     role: str
     content: List[Dict[str, Any]]
 
@@ -332,19 +368,7 @@ class Message:
         return cls(role="assistant", content=[{"text": text}])
 
     @classmethod
-    def tool_result(cls, tool_use_id: str, content: List[Dict]) -> 'Message':
-        return cls(
-            role="user",
-            content=[{
-                "toolResult": {
-                    "toolUseId": tool_use_id,
-                    "content": content
-                }
-            }]
-        )
-
-    @classmethod
-    def tool_request(cls, tool_use_id: str, name: str, input_data: dict) -> 'Message':
+    def assistant_tool_use(cls, tool_use_id: str, name: str, input_data: dict) -> 'Message':
         return cls(
             role="assistant",
             content=[{
@@ -356,225 +380,404 @@ class Message:
             }]
         )
 
+    @classmethod
+    def user_tool_result(cls, tool_use_id: str, content: List[Dict], status: str = "success") -> 'Message':
+        return cls(
+            role="user",
+            content=[{
+                "toolResult": {
+                    "toolUseId": tool_use_id,
+                    "content": content,
+                    "status": status
+                }
+            }]
+        )
+
     @staticmethod
-    def to_bedrock_format(tools_list: List[Dict]) -> List[Dict]:
-        return [{
-            "toolSpec": {
-                "name": tool["name"],
-                "description": tool["description"],
-                "inputSchema": {
-                    "json": {
-                        "type": "object",
-                        "properties": tool["input_schema"]["properties"],
-                        "required": tool["input_schema"].get("required", [])
+    def format_tools_for_bedrock(tools_list: List[Dict]) -> List[Dict]:
+        """Convert MCP tool definitions to Bedrock Converse toolConfig format."""
+        bedrock_tools = []
+        for tool in tools_list:
+            properties = tool["input_schema"].get("properties", {})
+            required = tool["input_schema"].get("required", [])
+
+            # Ensure at least one required field if properties exist
+            if not required and properties:
+                required = [next(iter(properties))]
+
+            bedrock_tools.append({
+                "toolSpec": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required
+                        }
                     }
                 }
-            }
-        } for tool in tools_list]
+            })
+        return bedrock_tools
 
 
 class HotelReservationManager:
-    """Class to manage hotel reservations in Elasticsearch"""
-    
+    """Manages hotel reservations in Elasticsearch with real availability updates."""
+
+    # Hardcoded logged-in user
+    CURRENT_USER = {
+        "user_id": "USER004",
+        "first_name": "Alex",
+        "last_name": "Demo",
+        "phone": "+1-555-987-6543",
+        "nationality": "United States",
+        "preferred_language": "English",
+        "preferred_currency": "USD",
+        "loyalty_tier": "Platinum",
+        "loyalty_points": 15000,
+    }
+
     def __init__(self, es_client: Elasticsearch):
-        """Initialize the reservation manager with an Elasticsearch client"""
         self.es = es_client
-        self.index_name = "reservations"
-        self.default_user = {
-            "user_id": "user123",
-            "user_name": "John Doe",
-            "user_email": "john.doe@example.com"
+
+    def get_current_user(self) -> Dict:
+        """Return the hardcoded logged-in user profile."""
+        return dict(self.CURRENT_USER)
+
+    # ------------------------------------------------------------------
+    # Room availability helpers
+    # ------------------------------------------------------------------
+    async def check_availability(
+        self, hotel_name: str, room_type: str, check_in: str, check_out: str
+    ) -> Dict:
+        """Check room availability for a hotel across a date range.
+        
+        Returns dict with 'available' bool, 'dates' list of per-day info,
+        'total_price', and 'currency'.
+        """
+        query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"match_phrase": {"hotel_name": hotel_name}},
+                        {"term": {"room_type.keyword": room_type}},
+                        {"range": {"date": {"gte": check_in, "lt": check_out}}},
+                        {"term": {"is_closed": False}},
+                    ]
+                }
+            },
+            "sort": [{"date": "asc"}],
+            "size": 100,
         }
-        
-        # Ensure the index exists
-        self._create_index_if_not_exists()
-    
-    def _create_index_if_not_exists(self):
-        """Create the reservations index if it doesn't exist"""
         try:
-            # Check if the index exists
-            self.es.indices.get(index=self.index_name)
-            print(f"Index '{self.index_name}' already exists.")
-        except exceptions.NotFoundError:
-            # If the index doesn't exist, create it
-            mappings = {
-                "properties": {
-                    "reservation_id": {"type": "keyword"},
-                    "user_id": {"type": "keyword"},
-                    "user_name": {"type": "text"},
-                    "user_email": {"type": "keyword"},
-                    "hotel_id": {"type": "keyword"},
-                    "hotel_name": {"type": "text"},
-                    "room_type": {"type": "keyword"},
-                    "check_in_date": {"type": "date"},
-                    "check_out_date": {"type": "date"},
-                    "num_guests": {"type": "integer"},
-                    "total_price": {"type": "float"},
-                    "payment_status": {"type": "keyword"},
-                    "special_requests": {"type": "text"},
-                    "created_at": {"type": "date"},
-                    "updated_at": {"type": "date"},
-                    "status": {"type": "keyword"}
-                }
-            }
-            
-            self.es.indices.create(
-                index=self.index_name,
-                mappings=mappings,
-                settings={
-                    "number_of_shards": 1,
-                    "number_of_replicas": 1
-                }
+            resp = self.es.search(
+                index="room_availability",
+                query=query["query"],
+                sort=query["sort"],
+                size=query["size"],
             )
-            print(f"Created index '{self.index_name}'.")
+            hits = [h["_source"] for h in resp["hits"]["hits"]]
         except Exception as e:
-            print(f"An error occurred while creating index '{self.index_name}': {e}")
-    
-    async def create_reservation(self, hotel_data: Dict) -> Dict:
-        """Create a new hotel reservation"""
-        # Generate a unique reservation ID
+            logger.error(f"Availability check failed: {e}")
+            return {"available": False, "error": str(e)}
+
+        if not hits:
+            return {"available": False, "reason": "No availability records found for the given criteria."}
+
+        all_available = all(h.get("available_rooms", 0) > 0 for h in hits)
+        total_price = sum(h.get("price", 0) for h in hits)
+        currency = hits[0].get("currency", "USD") if hits else "USD"
+        hotel_id = hits[0].get("hotel_id", "") if hits else ""
+        city = hits[0].get("city", "") if hits else ""
+
+        return {
+            "available": all_available,
+            "dates": hits,
+            "total_price": round(total_price, 2),
+            "currency": currency,
+            "nights": len(hits),
+            "hotel_id": hotel_id,
+            "city": city,
+            "hotel_name": hits[0].get("hotel_name", hotel_name) if hits else hotel_name,
+        }
+
+    async def _decrement_availability(
+        self, hotel_name: str, room_type: str, check_in: str, check_out: str
+    ) -> bool:
+        """Decrement available_rooms by 1 for each night in the booking range."""
+        query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"match_phrase": {"hotel_name": hotel_name}},
+                        {"term": {"room_type.keyword": room_type}},
+                        {"range": {"date": {"gte": check_in, "lt": check_out}}},
+                    ]
+                }
+            },
+            "size": 100,
+        }
+        try:
+            resp = self.es.search(
+                index="room_availability",
+                query=query["query"],
+                size=query["size"],
+            )
+            for hit in resp["hits"]["hits"]:
+                doc_id = hit["_id"]
+                current_avail = hit["_source"].get("available_rooms", 0)
+                new_avail = max(0, current_avail - 1)
+                self.es.update(
+                    index="room_availability",
+                    id=doc_id,
+                    doc={"available_rooms": new_avail},
+                    refresh=True,
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to decrement availability: {e}")
+            return False
+
+    async def _restore_availability(
+        self, hotel_name: str, room_type: str, check_in: str, check_out: str
+    ) -> bool:
+        """Restore available_rooms by 1 for each night (used on cancellation)."""
+        query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"match_phrase": {"hotel_name": hotel_name}},
+                        {"term": {"room_type.keyword": room_type}},
+                        {"range": {"date": {"gte": check_in, "lt": check_out}}},
+                    ]
+                }
+            },
+            "size": 100,
+        }
+        try:
+            resp = self.es.search(
+                index="room_availability",
+                query=query["query"],
+                size=query["size"],
+            )
+            for hit in resp["hits"]["hits"]:
+                doc_id = hit["_id"]
+                src = hit["_source"]
+                current_avail = src.get("available_rooms", 0)
+                total = src.get("total_rooms", current_avail + 1)
+                new_avail = min(total, current_avail + 1)
+                self.es.update(
+                    index="room_availability",
+                    id=doc_id,
+                    doc={"available_rooms": new_avail},
+                    refresh=True,
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore availability: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Reservation CRUD
+    # ------------------------------------------------------------------
+    async def create_reservation(self, booking: Dict) -> Dict:
+        """Create a reservation after verifying availability and updating room counts."""
+        hotel_name = booking.get("hotel_name", "Unknown Hotel")
+        room_type = booking.get("room_type", "Standard")
+        check_in = booking.get("check_in_date")
+        check_out = booking.get("check_out_date")
+        email = booking.get("email", "")
+
+        # 1. Verify availability
+        avail = await self.check_availability(hotel_name, room_type, check_in, check_out)
+        if not avail.get("available"):
+            reason = avail.get("reason", "Rooms not available for one or more nights in the requested range.")
+            return {"error": reason}
+
+        # 2. Build reservation document
         reservation_id = str(uuid.uuid4())
-        
-        # Get current timestamp
-        now = datetime.now().isoformat()
-        
-        # Create the reservation document
+        confirmation_code = f"CONF{uuid.uuid4().hex[:6].upper()}"
+        now_iso = datetime.now().isoformat()
+
         reservation = {
             "reservation_id": reservation_id,
-            "user_id": self.default_user["user_id"],
-            "user_name": self.default_user["user_name"],
-            "user_email": self.default_user["user_email"],
-            "hotel_id": hotel_data.get("hotel_id", "unknown"),
-            "hotel_name": hotel_data.get("hotel_name", "Unknown Hotel"),
-            "room_type": hotel_data.get("room_type", "Standard"),
-            "check_in_date": hotel_data.get("check_in_date"),
-            "check_out_date": hotel_data.get("check_out_date"),
-            "num_guests": hotel_data.get("num_guests", 1),
-            "total_price": hotel_data.get("total_price", 0.0),
-            "payment_status": "pending",
-            "special_requests": hotel_data.get("special_requests", ""),
-            "created_at": now,
-            "updated_at": now,
-            "status": "confirmed"
+            "confirmation_code": confirmation_code,
+            "user_id": self.CURRENT_USER["user_id"],
+            "user_name": f"{self.CURRENT_USER['first_name']} {self.CURRENT_USER['last_name']}",
+            "user_email": email,
+            "hotel_name": avail.get("hotel_name", hotel_name),
+            "hotel_id": avail.get("hotel_id", ""),
+            "city": avail.get("city", ""),
+            "room_type": room_type,
+            "check_in_date": check_in,
+            "check_out_date": check_out,
+            "num_guests": booking.get("num_guests", 1),
+            "num_rooms": 1,
+            "total_price": avail["total_price"],
+            "currency": avail["currency"],
+            "nights": avail.get("nights", 0),
+            "payment_status": "Paid",
+            "payment_method": "Credit Card",
+            "booking_date": now_iso,
+            "booking_source": "Direct",
+            "status": "Confirmed",
+            "special_requests": booking.get("special_requests", ""),
+            "breakfast_included": booking.get("breakfast_included", False),
+            "is_refundable": True,
+            "cancellation_deadline": check_in,
+            "created_at": now_iso,
+            "updated_at": now_iso,
         }
-        
-        # Index the document
+
+        # 3. Index the reservation
         try:
-            response = self.es.index(
-                index=self.index_name,
-                id=reservation_id,
-                document=reservation,
-                refresh=True  # Make the document immediately available for search
+            logger.info(f"Indexing reservation {reservation_id} with special_requests='{reservation.get('special_requests', '')}'")
+            resp = self.es.index(
+                index="reservations", id=reservation_id, document=reservation, refresh=True
             )
-            
-            if response["result"] == "created":
-                return reservation
-            else:
-                raise Exception(f"Failed to create reservation: {response}")
+            if resp["result"] != "created":
+                return {"error": f"Elasticsearch returned: {resp['result']}"}
         except Exception as e:
-            print(f"Error creating reservation: {e}")
-            raise
-    
+            return {"error": str(e)}
+
+        # 4. Decrement room availability
+        await self._decrement_availability(hotel_name, room_type, check_in, check_out)
+
+        return reservation
+
     async def get_reservation(self, reservation_id: str) -> Optional[Dict]:
-        """Get a reservation by ID"""
+        """Get a reservation by ID."""
         try:
-            response = self.es.get(
-                index=self.index_name,
-                id=reservation_id
-            )
-            return response["_source"]
+            resp = self.es.get(index="reservations", id=reservation_id)
+            return resp["_source"]
         except exceptions.NotFoundError:
             return None
         except Exception as e:
-            print(f"Error retrieving reservation {reservation_id}: {e}")
+            logger.error(f"Error retrieving reservation {reservation_id}: {e}")
             return None
-    
+
     async def update_reservation(self, reservation_id: str, update_data: Dict) -> Optional[Dict]:
-        """Update an existing reservation"""
-        try:
-            # First, get the current reservation
-            current = await self.get_reservation(reservation_id)
-            if not current:
-                return None
-            
-            # Update the fields
-            for key, value in update_data.items():
-                if key in current:
-                    current[key] = value
-            
-            # Update the timestamp
-            current["updated_at"] = datetime.now().isoformat()
-            
-            # Update the document
-            response = self.es.index(
-                index=self.index_name,
-                id=reservation_id,
-                document=current,
-                refresh=True
-            )
-            
-            if response["result"] in ["updated", "created"]:
-                return current
-            else:
-                raise Exception(f"Failed to update reservation: {response}")
-        except Exception as e:
-            print(f"Error updating reservation {reservation_id}: {e}")
+        """Update fields on an existing reservation, handling date/room changes with availability updates."""
+        current = await self.get_reservation(reservation_id)
+        if not current:
             return None
-    
-    async def cancel_reservation(self, reservation_id: str) -> bool:
-        """Cancel a reservation"""
+
+        # Guard: don't allow updates on cancelled reservations
+        if current.get("status") == "Cancelled":
+            return {"error": "Cannot update a cancelled reservation."}
+
+        old_hotel = current.get("hotel_name", "")
+        old_room = current.get("room_type", "")
+        old_checkin = current.get("check_in_date", "")
+        old_checkout = current.get("check_out_date", "")
+
+        # Apply updates
+        for k, v in update_data.items():
+            current[k] = v
+        current["updated_at"] = datetime.now().isoformat()
+
+        new_hotel = current.get("hotel_name", old_hotel)
+        new_room = current.get("room_type", old_room)
+        new_checkin = current.get("check_in_date", old_checkin)
+        new_checkout = current.get("check_out_date", old_checkout)
+
+        dates_changed = (old_hotel != new_hotel or old_room != new_room
+                         or old_checkin != new_checkin or old_checkout != new_checkout)
+
+        # If dates/hotel/room changed, verify new availability first
+        if dates_changed:
+            avail = await self.check_availability(new_hotel, new_room, new_checkin, new_checkout)
+            if not avail.get("available"):
+                return {"error": avail.get("reason", "New dates/room not available.")}
+            # Update price and hotel details from new availability
+            current["total_price"] = avail["total_price"]
+            current["currency"] = avail["currency"]
+            current["nights"] = avail.get("nights", 0)
+            current["hotel_id"] = avail.get("hotel_id", current.get("hotel_id", ""))
+            current["city"] = avail.get("city", current.get("city", ""))
+            current["hotel_name"] = avail.get("hotel_name", new_hotel)
+
         try:
-            # Update the status to cancelled
-            update_data = {"status": "cancelled"}
-            result = await self.update_reservation(reservation_id, update_data)
-            return result is not None
+            self.es.index(index="reservations", id=reservation_id, document=current, refresh=True)
         except Exception as e:
-            print(f"Error cancelling reservation {reservation_id}: {e}")
-            return False
-    
-    async def list_user_reservations(self, user_id: Optional[str] = None) -> List[Dict]:
-        """List all reservations for a user"""
-        if user_id is None:
-            user_id = self.default_user["user_id"]
-        
+            logger.error(f"Error updating reservation: {e}")
+            return None
+
+        # If dates changed, restore old availability and decrement new
+        if dates_changed:
+            await self._restore_availability(old_hotel, old_room, old_checkin, old_checkout)
+            await self._decrement_availability(new_hotel, new_room, new_checkin, new_checkout)
+
+        return current
+
+    async def cancel_reservation(self, reservation_id: str) -> Optional[Dict]:
+        """Cancel a reservation and restore room availability."""
+        current = await self.get_reservation(reservation_id)
+        if not current:
+            return None
+
+        # Guard: don't cancel an already-cancelled reservation (would double-restore availability)
+        if current.get("status") == "Cancelled":
+            return {"error": "This reservation is already cancelled."}
+
+        current["status"] = "Cancelled"
+        current["payment_status"] = "Refunded"
+        current["updated_at"] = datetime.now().isoformat()
         try:
-            # Query for all reservations for this user
-            query = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"term": {"user_id": user_id}}
-                        ]
-                    }
-                },
-                "sort": [
-                    {"created_at": {"order": "desc"}}
-                ]
-            }
-            
-            response = self.es.search(
-                index=self.index_name,
-                body=query,
-                size=100  # Limit to 100 reservations
+            self.es.index(index="reservations", id=reservation_id, document=current, refresh=True)
+            # Restore availability
+            await self._restore_availability(
+                current.get("hotel_name", ""),
+                current.get("room_type", ""),
+                current.get("check_in_date", ""),
+                current.get("check_out_date", ""),
             )
-            
-            # Extract the reservations from the response
-            reservations = [hit["_source"] for hit in response["hits"]["hits"]]
-            return reservations
+            return current
         except Exception as e:
-            print(f"Error listing reservations for user {user_id}: {e}")
+            logger.error(f"Error cancelling reservation: {e}")
+            return None
+
+    async def list_user_reservations(self) -> List[Dict]:
+        """List all reservations for the current logged-in user."""
+        query = {
+            "query": {"term": {"user_id": self.CURRENT_USER["user_id"]}},
+            "sort": [{"created_at": {"order": "desc"}}],
+            "size": 50,
+        }
+        try:
+            resp = self.es.search(
+                index="reservations",
+                query=query["query"],
+                sort=query["sort"],
+                size=query["size"],
+            )
+            return [h["_source"] for h in resp["hits"]["hits"]]
+        except Exception as e:
+            logger.error(f"Error listing reservations: {e}")
             return []
 
 
 class MultiServerMCPClient:
-    MODEL_ID = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     
     def __init__(self):
         self.sessions: Dict[str, ClientSession] = {}
         self.exit_stack = AsyncExitStack()
-        self.bedrock = boto3.client(service_name='bedrock-runtime', region_name='us-west-2')
+        
+        # Initialize Bedrock client with retry config
+        self.bedrock = boto3.client(
+            service_name='bedrock-runtime',
+            region_name=os.getenv("AWS_REGION", "us-east-1"),
+            config=BotoConfig(
+                retries={"max_attempts": 3, "mode": "adaptive"},
+                read_timeout=120,
+                connect_timeout=10
+            )
+        )
+        
         self.all_tools = {}
         self.server_configs = {}
+        self.tool_to_server: Dict[str, str] = {}  # tool_name -> server_name mapping
         
         # Initialize Elasticsearch client
         es_url = os.getenv("ES_URL")
@@ -590,6 +793,10 @@ class MultiServerMCPClient:
         
         # Initialize the reservation manager
         self.reservation_manager = HotelReservationManager(self.es)
+        
+        # Conversation history for multi-turn context
+        self.conversation_history: List[Dict] = []
+        self.max_history_turns = 20  # Keep last N user/assistant pairs to avoid token limits
 
     async def connect_to_servers(self, server_configs: Dict[str, Dict]):
         """Connect to multiple MCP servers"""
@@ -597,7 +804,7 @@ class MultiServerMCPClient:
         for server_name, config in server_configs.items():
             await self.connect_to_server(server_name, config)
         
-        print(f"\nConnected to {len(self.sessions)} servers with {len(self.all_tools)} total tools")
+        print(f"\nConnected to {len(self.sessions)} servers with {sum(len(t) for t in self.all_tools.values())} total tools")
         for server, tools in self.all_tools.items():
             print(f"- {server}: {[tool.name for tool in tools]}")
 
@@ -622,256 +829,446 @@ class MultiServerMCPClient:
         
         self.sessions[server_name] = session
         self.all_tools[server_name] = response.tools
-
-    def _make_bedrock_request(self, messages: List[Dict], tools: List[Dict]) -> Dict:
-        return self.bedrock.converse(
-            modelId=self.MODEL_ID,
-            messages=messages,
-            inferenceConfig={
-                "maxTokens": MAX_TOKENS,
-                "temperature": 0.7,
-                "topP": 0.9,
-            },
-            toolConfig={"tools": tools}
-        )
-
-    async def process_query(self, query: str) -> str:
-        # Check if this is a reservation-related command
-        if query.lower().startswith("book hotel"):
-            return await self._handle_book_hotel(query)
-        elif query.lower().startswith("view reservation"):
-            return await self._handle_view_reservation(query)
-        elif query.lower().startswith("update reservation"):
-            return await self._handle_update_reservation(query)
-        elif query.lower().startswith("cancel reservation"):
-            return await self._handle_cancel_reservation(query)
-        elif query.lower() == "my reservations":
-            return await self._handle_list_reservations()
         
-        # If not a reservation command, process normally with the LLM
-        messages = [
-            Message.user(SYSTEM_PROMPT).__dict__,
-            Message.user(query).__dict__
-        ]
-        
+        # Build tool-to-server mapping
+        for tool in response.tools:
+            self.tool_to_server[tool.name] = server_name
+
+    def _get_available_tools(self) -> tuple[List[Dict], List[Dict]]:
+        """Build the available tools list and Bedrock-formatted tools."""
         available_tools = []
         for server_name, tools in self.all_tools.items():
             for tool in tools:
                 tool_info = {
-                    "name": f"{tool.name}",
+                    "name": tool.name,
                     "server": server_name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema or {"type": "object", "properties": {}}
                 }
-                
-                if "required" not in tool_info["input_schema"]:
-                    tool_info["input_schema"]["required"] = []
-                    if tool_info["input_schema"]["properties"]:
-                        first_param = next(iter(tool_info["input_schema"]["properties"]))
-                        tool_info["input_schema"]["required"] = [first_param]
-                
                 available_tools.append(tool_info)
 
-        bedrock_tools = Message.to_bedrock_format(available_tools)
-        response = self._make_bedrock_request(messages, bedrock_tools)
-        
-        return await self._process_response(response, messages, bedrock_tools, available_tools)
+        bedrock_tools = Message.format_tools_for_bedrock(available_tools)
+        return available_tools, bedrock_tools
 
-    async def _handle_book_hotel(self, query: str) -> str:
-        """Handle the book hotel command"""
-        # Parse the query to extract hotel booking details
-        # For demo purposes, we'll use some default values
-        today = datetime.now()
-        check_in = (today + timedelta(days=7)).strftime("%Y-%m-%d")
-        check_out = (today + timedelta(days=10)).strftime("%Y-%m-%d")
-        
-        # Extract hotel name from query if provided
-        hotel_name = "Seaside Resort"  # Default
-        if "at" in query.lower():
-            parts = query.lower().split("at")
-            if len(parts) > 1 and parts[1].strip():
-                hotel_name = parts[1].strip().title()
-        
-        # Create a reservation with default values
-        hotel_data = {
-            "hotel_id": f"hotel_{uuid.uuid4().hex[:8]}",
-            "hotel_name": hotel_name,
-            "room_type": "Deluxe",
-            "check_in_date": check_in,
-            "check_out_date": check_out,
-            "num_guests": 2,
-            "total_price": 450.00,
-            "special_requests": "Late check-in, room with ocean view if possible"
-        }
-        
+    def _converse_stream(self, messages: List[Dict], tools: List[Dict]) -> Dict:
+        """Make a Bedrock ConverseStream API call and return the event stream."""
         try:
-            reservation = await self.reservation_manager.create_reservation(hotel_data)
+            kwargs = {
+                "modelId": self.MODEL_ID,
+                "system": [{"text": SYSTEM_PROMPT}],
+                "messages": messages,
+                "inferenceConfig": {
+                    "maxTokens": MAX_TOKENS,
+                    "temperature": 0.7,
+                },
+            }
             
-            return f"""✅ Hotel reservation confirmed!
+            # Only include toolConfig if tools are available
+            if tools:
+                kwargs["toolConfig"] = {"tools": tools}
+            
+            response = self.bedrock.converse_stream(**kwargs)
+            return response
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_msg = e.response['Error']['Message']
+            logger.error(f"Bedrock API error ({error_code}): {error_msg}")
+            raise
 
-Reservation ID: {reservation['reservation_id']}
-Hotel: {reservation['hotel_name']}
-Room Type: {reservation['room_type']}
-Check-in: {reservation['check_in_date']}
-Check-out: {reservation['check_out_date']}
-Guests: {reservation['num_guests']}
-Total Price: ${reservation['total_price']:.2f}
-Status: {reservation['status'].capitalize()}
-
-Your reservation has been confirmed. You can view or modify this reservation using the reservation ID.
-"""
-        except Exception as e:
-            return f"❌ Failed to create reservation: {str(e)}"
-
-    async def _handle_view_reservation(self, query: str) -> str:
-        """Handle the view reservation command"""
-        # Extract reservation ID from query
-        parts = query.split()
-        if len(parts) < 3:
-            return "❌ Please provide a reservation ID. Example: view reservation abc123"
+    def _collect_stream(self, response: Dict, print_text: bool = True) -> tuple[List[Dict], str]:
+        """Consume a ConverseStream response, optionally printing text tokens in real-time.
         
-        reservation_id = parts[2]
+        Returns (content_blocks, stop_reason) where content_blocks is the reconstructed
+        list of content items (text and toolUse) matching the non-streaming format.
+        """
+        content_blocks = []
+        stop_reason = ""
         
+        # State for accumulating the current block
+        current_text = ""
+        current_tool_use = None
+        tool_input_json = ""
+        
+        stream = response.get("stream")
+        if not stream:
+            return content_blocks, "end_turn"
+        
+        for event in stream:
+            if "contentBlockStart" in event:
+                start = event["contentBlockStart"].get("start", {})
+                if "toolUse" in start:
+                    # Flush any accumulated text
+                    if current_text:
+                        content_blocks.append({"text": current_text})
+                        current_text = ""
+                    current_tool_use = {
+                        "toolUseId": start["toolUse"]["toolUseId"],
+                        "name": start["toolUse"]["name"],
+                    }
+                    tool_input_json = ""
+                    
+            elif "contentBlockDelta" in event:
+                delta = event["contentBlockDelta"].get("delta", {})
+                if "text" in delta:
+                    chunk = delta["text"]
+                    current_text += chunk
+                    if print_text:
+                        print(chunk, end="", flush=True)
+                elif "toolUse" in delta:
+                    tool_input_json += delta["toolUse"].get("input", "")
+                    
+            elif "contentBlockStop" in event:
+                if current_tool_use is not None:
+                    # Parse accumulated JSON input
+                    try:
+                        parsed_input = json.loads(tool_input_json) if tool_input_json else {}
+                    except json.JSONDecodeError:
+                        parsed_input = {}
+                    current_tool_use["input"] = parsed_input
+                    content_blocks.append({"toolUse": current_tool_use})
+                    current_tool_use = None
+                    tool_input_json = ""
+                elif current_text:
+                    content_blocks.append({"text": current_text})
+                    current_text = ""
+                    
+            elif "messageStop" in event:
+                stop_reason = event["messageStop"].get("stopReason", "end_turn")
+                
+            elif "metadata" in event:
+                # Contains usage info; we can log it if needed
+                usage = event["metadata"].get("usage", {})
+                if usage:
+                    logger.debug(f"Token usage - input: {usage.get('inputTokens', 0)}, output: {usage.get('outputTokens', 0)}")
+        
+        # Flush any remaining text
+        if current_text:
+            content_blocks.append({"text": current_text})
+        
+        if print_text:
+            print()  # Newline after streaming output
+            
+        return content_blocks, stop_reason
+
+    async def process_query(self, query: str) -> str:
+        # Add user message to conversation history
+        user_msg = Message.user(query).__dict__
+        self.conversation_history.append(user_msg)
+        
+        # Build messages from full conversation history
+        messages = list(self.conversation_history)
+        
+        available_tools, bedrock_tools = self._get_available_tools()
+        
+        # Add reservation management tools
+        reservation_tools = self._get_reservation_tools()
+        bedrock_tools.extend(reservation_tools)
+        
+        response = self._converse_stream(messages, bedrock_tools)
+        
+        result = await self._process_response(response, messages, bedrock_tools)
+        
+        # After processing, extract the final assistant text and add to history
+        assistant_text = result.replace("[Thinking: ", "").strip()
+        clean_lines = [
+            line for line in assistant_text.split("\n")
+            if not line.startswith("[Calling tool ") and not line.startswith("[Tool ") and not line.startswith("[ERROR")
+        ]
+        clean_text = "\n".join(clean_lines).strip()
+        if clean_text:
+            self.conversation_history.append(Message.assistant(clean_text).__dict__)
+        
+        self._trim_history()
+        
+        return result
+    
+    def _trim_history(self):
+        """Trim conversation history to stay within token limits."""
+        # Each turn is a user + assistant pair = 2 messages
+        max_messages = self.max_history_turns * 2
+        if len(self.conversation_history) > max_messages:
+            # Keep the most recent messages, ensuring we start with a user message
+            trimmed = self.conversation_history[-max_messages:]
+            # Make sure we start with a user message
+            while trimmed and trimmed[0]["role"] != "user":
+                trimmed.pop(0)
+            self.conversation_history = trimmed
+
+    # ------------------------------------------------------------------
+    # Reservation tools exposed to the LLM
+    # ------------------------------------------------------------------
+    RESERVATION_TOOL_NAMES = {"book_room", "view_reservation", "cancel_reservation", "update_reservation", "list_my_reservations"}
+
+    def _get_reservation_tools(self) -> List[Dict]:
+        """Return Bedrock-formatted tool specs for reservation management."""
+        return [
+            {
+                "toolSpec": {
+                    "name": "book_room",
+                    "description": (
+                        "Book a hotel room. Checks availability in Elasticsearch, creates the reservation, "
+                        "decrements room availability, and stores the reservation in the 'reservations' index. "
+                        "The logged-in user is Alex Demo. You must collect the user's email for confirmation. "
+                        "IMPORTANT: If the user mentions ANY special requests (e.g. extra water bottles, late check-in, "
+                        "extra pillows, airport shuttle, etc.), you MUST include them in the special_requests parameter."
+                    ),
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": {
+                                "hotel_name": {"type": "string", "description": "Full hotel name as it appears in the system"},
+                                "room_type": {"type": "string", "description": "Room type: Standard, Deluxe, or Suite"},
+                                "check_in_date": {"type": "string", "description": "Check-in date in YYYY-MM-DD format"},
+                                "check_out_date": {"type": "string", "description": "Check-out date in YYYY-MM-DD format"},
+                                "num_guests": {"type": "integer", "description": "Number of guests"},
+                                "email": {"type": "string", "description": "Email address for booking confirmation"},
+                                "special_requests": {"type": "string", "description": "Special requests from the user such as extra water bottles, late check-in, extra pillows, airport shuttle, room preferences, etc. Always include if the user mentions any."},
+                            },
+                            "required": ["hotel_name", "room_type", "check_in_date", "check_out_date", "email"],
+                        }
+                    },
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "view_reservation",
+                    "description": "View details of a specific reservation by its reservation ID.",
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": {
+                                "reservation_id": {"type": "string", "description": "The reservation UUID"},
+                            },
+                            "required": ["reservation_id"],
+                        }
+                    },
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "cancel_reservation",
+                    "description": "Cancel a reservation by ID. This updates the reservation status to Cancelled, sets payment to Refunded, and restores room availability in Elasticsearch. Cannot cancel an already-cancelled reservation.",
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": {
+                                "reservation_id": {"type": "string", "description": "The reservation UUID to cancel"},
+                            },
+                            "required": ["reservation_id"],
+                        }
+                    },
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "update_reservation",
+                    "description": (
+                        "Update an existing reservation. Can change dates, room type, or special requests. "
+                        "If dates or room type change, availability is checked, old availability is restored, "
+                        "and new availability is decremented in Elasticsearch automatically. "
+                        "Cannot update a cancelled reservation. "
+                        "IMPORTANT: If the user wants to add or change special requests (e.g. extra water bottles, "
+                        "late check-in, extra pillows), include them in the special_requests parameter."
+                    ),
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": {
+                                "reservation_id": {"type": "string", "description": "The reservation UUID to update"},
+                                "check_in_date": {"type": "string", "description": "New check-in date in YYYY-MM-DD format"},
+                                "check_out_date": {"type": "string", "description": "New check-out date in YYYY-MM-DD format"},
+                                "room_type": {"type": "string", "description": "New room type: Standard, Deluxe, or Suite"},
+                                "hotel_name": {"type": "string", "description": "New hotel name (if changing hotels)"},
+                                "num_guests": {"type": "integer", "description": "Updated number of guests"},
+                                "special_requests": {"type": "string", "description": "Updated special requests"},
+                            },
+                            "required": ["reservation_id"],
+                        }
+                    },
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "list_my_reservations",
+                    "description": "List all reservations for the currently logged-in user.",
+                    "inputSchema": {
+                        "json": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                        }
+                    },
+                }
+            },
+        ]
+
+    async def _execute_reservation_tool(self, tool_name: str, tool_args: Dict) -> str:
+        """Execute a local reservation tool and return the result as text."""
         try:
-            reservation = await self.reservation_manager.get_reservation(reservation_id)
-            
-            if not reservation:
-                return f"❌ Reservation with ID {reservation_id} not found."
-            
-            return f"""📋 Reservation Details:
+            if tool_name == "book_room":
+                result = await self.reservation_manager.create_reservation(tool_args)
+                if "error" in result:
+                    return json.dumps({"status": "error", "message": result["error"]})
+                return json.dumps({
+                    "status": "success",
+                    "reservation_id": result["reservation_id"],
+                    "confirmation_code": result["confirmation_code"],
+                    "hotel_name": result["hotel_name"],
+                    "hotel_id": result.get("hotel_id", ""),
+                    "city": result.get("city", ""),
+                    "room_type": result["room_type"],
+                    "check_in_date": result["check_in_date"],
+                    "check_out_date": result["check_out_date"],
+                    "nights": result.get("nights", 0),
+                    "num_guests": result.get("num_guests", 1),
+                    "total_price": result["total_price"],
+                    "currency": result["currency"],
+                    "user_name": result["user_name"],
+                    "user_email": result["user_email"],
+                    "payment_status": result["payment_status"],
+                    "booking_status": result["status"],
+                    "special_requests": result.get("special_requests", ""),
+                    "breakfast_included": result.get("breakfast_included", False),
+                })
 
-Reservation ID: {reservation['reservation_id']}
-Hotel: {reservation['hotel_name']}
-Room Type: {reservation['room_type']}
-Check-in: {reservation['check_in_date']}
-Check-out: {reservation['check_out_date']}
-Guests: {reservation['num_guests']}
-Total Price: ${reservation['total_price']:.2f}
-Status: {reservation['status'].capitalize()}
-Payment Status: {reservation['payment_status'].capitalize()}
-Special Requests: {reservation['special_requests'] or 'None'}
-"""
+            elif tool_name == "view_reservation":
+                res = await self.reservation_manager.get_reservation(tool_args["reservation_id"])
+                if not res:
+                    return json.dumps({"status": "error", "message": f"Reservation {tool_args['reservation_id']} not found."})
+                return json.dumps({"status": "success", "reservation": res})
+
+            elif tool_name == "cancel_reservation":
+                res = await self.reservation_manager.cancel_reservation(tool_args["reservation_id"])
+                if not res:
+                    return json.dumps({"status": "error", "message": f"Reservation {tool_args['reservation_id']} not found or could not be cancelled."})
+                if "error" in res:
+                    return json.dumps({"status": "error", "message": res["error"]})
+                return json.dumps({"status": "success", "message": "Reservation cancelled and payment refunded. Room availability restored.", "reservation": res})
+
+            elif tool_name == "update_reservation":
+                reservation_id = tool_args.get("reservation_id")
+                update_fields = {k: v for k, v in tool_args.items() if k != "reservation_id"}
+                res = await self.reservation_manager.update_reservation(reservation_id, update_fields)
+                if not res:
+                    return json.dumps({"status": "error", "message": f"Reservation {reservation_id} not found."})
+                if "error" in res:
+                    return json.dumps({"status": "error", "message": res["error"]})
+                return json.dumps({"status": "success", "message": "Reservation updated successfully.", "reservation": res})
+
+            elif tool_name == "list_my_reservations":
+                reservations = await self.reservation_manager.list_user_reservations()
+                return json.dumps({"status": "success", "count": len(reservations), "reservations": reservations})
+
+            else:
+                return json.dumps({"status": "error", "message": f"Unknown reservation tool: {tool_name}"})
+
         except Exception as e:
-            return f"❌ Error retrieving reservation: {str(e)}"
-
-    async def _handle_update_reservation(self, query: str) -> str:
-        """Handle the update reservation command"""
-        # Extract reservation ID from query
-        parts = query.split()
-        if len(parts) < 3:
-            return "❌ Please provide a reservation ID. Example: update reservation abc123"
-        
-        reservation_id = parts[2]
-        
-        # For demo purposes, we'll update the room type and special requests
-        update_data = {
-            "room_type": "Premium Suite",
-            "special_requests": "Early check-in, champagne in room",
-            "total_price": 650.00  # Updated price for the premium suite
-        }
-        
-        try:
-            updated = await self.reservation_manager.update_reservation(reservation_id, update_data)
-            
-            if not updated:
-                return f"❌ Reservation with ID {reservation_id} not found or could not be updated."
-            
-            return f"""✅ Reservation Updated:
-
-Reservation ID: {updated['reservation_id']}
-Hotel: {updated['hotel_name']}
-Room Type: {updated['room_type']} (Updated)
-Check-in: {updated['check_in_date']}
-Check-out: {updated['check_out_date']}
-Guests: {updated['num_guests']}
-Total Price: ${updated['total_price']:.2f} (Updated)
-Status: {updated['status'].capitalize()}
-Special Requests: {updated['special_requests']} (Updated)
-"""
-        except Exception as e:
-            return f"❌ Error updating reservation: {str(e)}"
-
-    async def _handle_cancel_reservation(self, query: str) -> str:
-        """Handle the cancel reservation command"""
-        # Extract reservation ID from query
-        parts = query.split()
-        if len(parts) < 3:
-            return "❌ Please provide a reservation ID. Example: cancel reservation abc123"
-        
-        reservation_id = parts[2]
-        
-        try:
-            success = await self.reservation_manager.cancel_reservation(reservation_id)
-            
-            if not success:
-                return f"❌ Reservation with ID {reservation_id} not found or could not be cancelled."
-            
-            return f"✅ Reservation {reservation_id} has been successfully cancelled."
-        except Exception as e:
-            return f"❌ Error cancelling reservation: {str(e)}"
-
-    async def _handle_list_reservations(self) -> str:
-        """Handle the my reservations command"""
-        try:
-            reservations = await self.reservation_manager.list_user_reservations()
-            
-            if not reservations:
-                return "You don't have any reservations yet."
-            
-            result = "📋 Your Reservations:\n\n"
-            
-            for i, res in enumerate(reservations, 1):
-                result += f"{i}. {res['hotel_name']} - {res['check_in_date']} to {res['check_out_date']} - {res['status'].capitalize()}\n"
-                result += f"   ID: {res['reservation_id']} | Room: {res['room_type']} | ${res['total_price']:.2f}\n\n"
-            
-            return result
-        except Exception as e:
-            return f"❌ Error retrieving reservations: {str(e)}"
+            logger.error(f"Reservation tool {tool_name} failed: {e}")
+            return json.dumps({"status": "error", "message": str(e)})
 
     async def _process_response(
         self, 
         response: Dict, 
         messages: List[Dict], 
         bedrock_tools: List[Dict],
-        available_tools: List[Dict]
     ) -> str:
+        """Process Bedrock streaming response, handling the tool-use agentic loop."""
         final_text = []
         turn_count = 0
-        tool_to_server = {tool["name"]: tool["server"] for tool in available_tools}
         
         try:
             while turn_count < MAX_TURNS:
-                if response['stopReason'] == 'tool_use':
-                    for item in response['output']['message']['content']:
-                        if 'text' in item:
-                            thinking_text = item['text']
-                            final_text.append(f"[Thinking: {thinking_text}]")
+                content_blocks, stop_reason = self._collect_stream(response, print_text=True)
+                
+                if stop_reason == 'tool_use':
+                    messages.append({"role": "assistant", "content": content_blocks})
+                    
+                    tool_results_content = []
+                    
+                    for item in content_blocks:
+                        if 'text' in item and item['text']:
+                            final_text.append(f"[Thinking: {item['text']}]")
                         
                         elif 'toolUse' in item:
                             tool_info = item['toolUse']
                             tool_name = tool_info['name']
                             
-                            server_name = tool_to_server.get(tool_name)
+                            # Check if this is a local reservation tool
+                            if tool_name in self.RESERVATION_TOOL_NAMES:
+                                print(f"\n  🔧 Calling tool: {tool_name} (local: reservations)")
+                                tool_args_str = json.dumps(tool_info['input'], indent=2)
+                                if len(tool_args_str) > 300:
+                                    tool_args_str = tool_args_str[:300] + "..."
+                                print(f"     Args: {tool_args_str}")
+                                
+                                result_text = await self._execute_reservation_tool(
+                                    tool_name, tool_info['input']
+                                )
+                                preview = result_text[:150].replace('\n', ' ')
+                                print(f"     ✅ Result: {preview}{'...' if len(result_text) > 150 else ''}")
+                                
+                                tool_results_content.append({
+                                    "toolResult": {
+                                        "toolUseId": tool_info['toolUseId'],
+                                        "content": [{"text": result_text}],
+                                        "status": "success"
+                                    }
+                                })
+                                final_text.append(f"[Tool {tool_name} returned: {result_text[:200]}]")
+                                continue
+                            
+                            # Otherwise route to MCP server
+                            server_name = self.tool_to_server.get(tool_name)
                             if not server_name:
-                                error_msg = f"Tool {tool_name} not found in any connected server"
-                                final_text.append(f"[ERROR: {error_msg}]")
-                                return "\n".join(final_text)
+                                err_msg = f"  ❌ Tool '{tool_name}' not found in any connected server"
+                                print(err_msg)
+                                tool_results_content.append({
+                                    "toolResult": {
+                                        "toolUseId": tool_info['toolUseId'],
+                                        "content": [{"text": f"Error: Tool {tool_name} not found in any connected server"}],
+                                        "status": "error"
+                                    }
+                                })
+                                final_text.append(err_msg)
+                                continue
                             
-                            tool_result, messages = await self._handle_tool_call(
-                                server_name, 
-                                tool_info, 
-                                messages
+                            print(f"\n  🔧 Calling tool: {tool_name} (server: {server_name})")
+                            tool_args_str = json.dumps(tool_info['input'], indent=2)
+                            if len(tool_args_str) > 300:
+                                tool_args_str = tool_args_str[:300] + "..."
+                            print(f"     Args: {tool_args_str}")
+                            
+                            result_content, display_text = await self._handle_tool_call(
+                                server_name, tool_info
                             )
-                            final_text.extend(tool_result)
-                            
-                            response = self._make_bedrock_request(messages, bedrock_tools)
-                            turn_count += 1
-                            break
+                            tool_results_content.append({
+                                "toolResult": {
+                                    "toolUseId": tool_info['toolUseId'],
+                                    "content": result_content,
+                                    "status": "success"
+                                }
+                            })
+                            final_text.extend(display_text)
                     
-                else:  # For non-tool_use responses
-                    if 'output' in response and 'message' in response['output']:
-                        response_text = response['output']['message']['content'][0]['text']
-                        final_text.append(response_text)
+                    if tool_results_content:
+                        messages.append({"role": "user", "content": tool_results_content})
+                    
+                    response = self._converse_stream(messages, bedrock_tools)
+                    turn_count += 1
+                    
+                elif stop_reason == 'end_turn':
+                    for item in content_blocks:
+                        if 'text' in item and item['text']:
+                            final_text.append(item['text'])
+                    return "\n".join(final_text)
+                
+                else:
+                    for item in content_blocks:
+                        if 'text' in item and item['text']:
+                            final_text.append(item['text'])
+                    if stop_reason == 'max_tokens':
+                        final_text.append("\n[Response truncated due to token limit]")
                     return "\n".join(final_text)
 
             if turn_count >= MAX_TURNS:
@@ -881,6 +1278,7 @@ Special Requests: {updated['special_requests']} (Updated)
             
         except Exception as e:
             import traceback
+            logger.error(f"Error processing response: {e}")
             final_text.append(f"\n[Error processing response: {str(e)}]")
             final_text.append(traceback.format_exc())
             return "\n".join(final_text)
@@ -889,62 +1287,83 @@ Special Requests: {updated['special_requests']} (Updated)
         self, 
         server_name: str, 
         tool_info: Dict, 
-        messages: List[Dict]
-    ) -> tuple[List[str], List[Dict]]:
-        """Handle a tool call and return the results and updated messages"""
+    ) -> tuple[List[Dict], List[str]]:
+        """Execute a tool call via MCP and return (result_content, display_text)."""
         tool_name = tool_info['name']
         tool_args = tool_info['input']
-        tool_use_id = tool_info['toolUseId']
+
+        # Fix stringified JSON values — the LLM sometimes serializes nested objects/arrays as strings
+        for key, value in tool_args.items():
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped.startswith('{') or stripped.startswith('['):
+                    try:
+                        tool_args[key] = json.loads(stripped)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
         session = self.sessions[server_name]
-        result = await session.call_tool(tool_name, tool_args)
-
-        tool_result_content = [{"json": {"text": content.text}} for content in result.content if content.text]
-
-        tool_request = Message.tool_request(tool_use_id, tool_name, tool_args)
-        tool_result = Message.tool_result(tool_use_id, tool_result_content)
         
-        messages.append(tool_request.__dict__)
-        messages.append(tool_result.__dict__)
+        display_text = [f"[Calling tool {tool_name} on server {server_name} with args {tool_args}]"]
         
-        formatted_result = [
-            f"[Calling tool {tool_name} on server {server_name} with args {tool_args}]",
-            f"[Tool {tool_name} returned: {result.content[0].text if result.content else 'No content'}]"
-        ]
-        
-        return formatted_result, messages
+        try:
+            result = await session.call_tool(tool_name, tool_args)
+            
+            # Build tool result content for Bedrock
+            result_content = []
+            for content in result.content:
+                if hasattr(content, 'text') and content.text:
+                    result_content.append({"text": content.text})
+                elif hasattr(content, 'data'):
+                    result_content.append({"json": content.data})
+            
+            # Ensure we always have content
+            if not result_content:
+                result_content = [{"text": "Tool executed successfully with no output"}]
+            
+            # Build display text
+            first_text = next((c.text for c in result.content if hasattr(c, 'text') and c.text), "No content")
+            display_text.append(f"[Tool {tool_name} returned: {first_text[:200]}]")
+            
+            # Print result status to console
+            preview = first_text[:150].replace('\n', ' ')
+            print(f"     ✅ Result: {preview}{'...' if len(first_text) > 150 else ''}")
+            
+            return result_content, display_text
+            
+        except Exception as e:
+            logger.error(f"Tool call failed: {tool_name} - {e}")
+            error_content = [{"text": f"Tool execution failed: {str(e)}"}]
+            display_text.append(f"[Tool {tool_name} failed: {str(e)}]")
+            print(f"     ❌ Failed: {str(e)}")
+            return error_content, display_text
 
     async def chat_loop(self):
-        print("\nWelcome to the Multi-Server MCP Chat!")
-        print("Type 'quit' to exit or your query.")
-        print("\n\nTravel Reservaration and Advisory Prompts you can ask: ")
-        print("- I am planing a trip to New York in 2 weeks. Whats the weather like and are there any travel advisories?")
-        print("- Which destinations in France, can I consider to visit?") 
-        print("- OK, are there any upcoming events in France that are interesting to consider for my travel?")
-        print("- Any interesting events in Paris around next year.")
-        print("- Can you give precise details of when is Paris Fashion Week happening?")
-        print("- Find me some hotels in Paris that offer free breakfast")
-        print("- When are the rooms available for the Hôtel de Crillon (Rosewood) in Paris")
-        print("- book hotel at Hôtel de Crillon (Rosewood)")
-        print("- view reservation replace_this_string_with_reservation_id")
-        print("- update reservation replace_this_string_with_reservation_id")
-        print("- cancel reservation replace_this_string_with_reservation_id")
-        print("\n\nReservation Commands:")
-        print("- book hotel: Create a new hotel reservation")
-        print("- view reservation [id]: View details of a specific reservation")
-        print("- update reservation [id]: Update an existing reservation")
-        print("- cancel reservation [id]: Cancel a reservation")
-        print("- my reservations: List all reservations for the current user")
+        user = HotelReservationManager.CURRENT_USER
+        print(f"\nWelcome to the Travel Advisory System, {user['first_name']} {user['last_name']}!")
+        print(f"Loyalty: {user['loyalty_tier']} ({user['loyalty_points']:,} points)")
+        print("Type 'quit' to exit, 'new chat' to start a fresh conversation.\n")
+        print("Here's what I can help with:")
+        print("  🌍 Destination info   — weather, attractions, events, travel advisories")
+        print("  🏨 Hotel search       — find and compare hotels at any destination")
+        print("  📅 Room booking       — check availability, book, and manage reservations")
+        print("  📧 Confirmations      — email booking confirmations via AWS SES")
+        print("  📋 My reservations    — view, update, or cancel your bookings")
         
         while True:
             try:
                 query = input("\nYou: ").strip()
+                if not query:
+                    continue
                 if query.lower() == 'quit':
                     break
+                if query.lower() == 'new chat':
+                    self.conversation_history.clear()
+                    print("\n🔄 Conversation history cleared. Starting fresh!")
+                    continue
                 
-                print("\nAssistant:", end=" ")
-                response = await self.process_query(query)
-                print(response)
+                print("\nAssistant: ", end="", flush=True)
+                await self.process_query(query)
                     
             except Exception as e:
                 print(f"\nError: {str(e)}")
