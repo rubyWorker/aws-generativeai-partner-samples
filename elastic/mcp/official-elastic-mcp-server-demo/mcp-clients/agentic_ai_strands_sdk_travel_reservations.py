@@ -15,11 +15,11 @@ from strands.models import BedrockModel
 from mcp import stdio_client, StdioServerParameters
 
 # Constants
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = f"""
 # Travel Advisory System Prompt
 
 You are a travel advisory assistant that helps users find information about destinations, attractions, hotels, travel advisories, weather forecasts, and events. You have access to Elasticsearch through an MCP server to retrieve relevant information. You can also help users manage their hotel reservations and view their booking history.
-Current date is 9th May 2025.
+Current date is {datetime.now().strftime('%B %d, %Y')}.
 
 ## Available Elasticsearch Indices
 
@@ -763,7 +763,7 @@ async def main():
         list_reservations,
         send_email
     ]
-    MODEL_ID = "us.anthropic.claude-3-5-sonnet-20241022-v2:0" # Using Claude 3.5 Sonnet
+    MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0" # Using Claude 3.5 Sonnet
     
     model = BedrockModel (
         model_id=MODEL_ID,
