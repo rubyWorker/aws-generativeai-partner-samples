@@ -404,21 +404,18 @@ const TabbedSidebar: React.FC<TabbedSidebarProps> = ({ user, messages = [], refr
                   style={{ border: 0 }}
                   loading="lazy"
                   src={(() => {
-                    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+                    // Use OpenStreetMap embed (no API key required)
+                    const location = selectedLocations.length > 0
+                      ? selectedLocations[0]
+                      : selectedLocation || itineraryItems[0]?.location || '';
 
-                    // Multiple locations - use directions mode with waypoints
-                    if (selectedLocations.length > 1) {
-                      const origin = encodeURIComponent(selectedLocations[0]);
-                      const destination = encodeURIComponent(selectedLocations[selectedLocations.length - 1]);
-                      const waypoints = selectedLocations.slice(1, -1).map(loc => encodeURIComponent(loc)).join('|');
-                      return waypoints
-                        ? `https://www.google.com/maps/embed/v1/directions?key=${apiKey}&origin=${origin}&destination=${destination}&waypoints=${waypoints}&mode=walking`
-                        : `https://www.google.com/maps/embed/v1/directions?key=${apiKey}&origin=${origin}&destination=${destination}&mode=walking`;
+                    if (!location) {
+                      return 'https://www.openstreetmap.org/export/embed.html?bbox=-180,-60,180,75&layer=mapnik';
                     }
 
-                    // Single location
-                    const location = selectedLocation || itineraryItems[0]?.location || 'World';
-                    return `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(location)}`;
+                    // Use Nominatim search via OSM embed
+                    const encoded = encodeURIComponent(location);
+                    return `https://www.openstreetmap.org/export/embed.html?bbox=-180,-60,180,75&layer=mapnik&marker=&query=${encoded}`;
                   })()}
                   title="Itinerary Map"
                 />

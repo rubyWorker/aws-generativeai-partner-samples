@@ -1,12 +1,14 @@
 #!/bin/bash
-# Entrypoint for supervisor agent — Datadog-only observability via OTEL.
+# Entrypoint for supervisor agent — Datadog LLM Observability via pure OTEL.
 #
 # How it works:
-# 1. strands-agents[otel] makes Strands emit OTEL-compliant spans
-# 2. ddtrace-run auto-instruments those spans and sends to Datadog LLM Observability
-# 3. DISABLE_ADOT_OBSERVABILITY=true prevents AgentCore's ADOT from conflicting
+# 1. DD_API_KEY is resolved from Secrets Manager
+# 2. dd_init.py (imported first in agent.py) configures an OTEL TracerProvider
+#    that exports traces directly to Datadog's OTLP endpoint
+# 3. strands-agents[otel] automatically emits GenAI spans via that TracerProvider
+# 4. DISABLE_ADOT_OBSERVABILITY=true prevents AgentCore's ADOT from conflicting
 #
-# Resolves DD_API_KEY from Secrets Manager before starting.
+# No ddtrace or Datadog Agent required.
 
 if [ -n "$DD_API_KEY_SECRET_ARN" ] && [ -z "$DD_API_KEY" ]; then
     echo "Resolving DD_API_KEY from Secrets Manager..."
@@ -22,4 +24,4 @@ print(client.get_secret_value(SecretId=os.environ['DD_API_KEY_SECRET_ARN'])['Sec
     fi
 fi
 
-exec ddtrace-run python agent.py
+exec python agent.py

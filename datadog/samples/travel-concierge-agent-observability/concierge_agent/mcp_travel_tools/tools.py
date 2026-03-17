@@ -24,7 +24,6 @@ from serpapi import GoogleSearch
 REGION = os.getenv("AWS_REGION")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-GOOGLE_MAPS_KEY = os.getenv("GOOGLE_MAPS_KEY")
 SERP_API_KEY = os.getenv("SERP_API_KEY")
 AMADEUS_PUBLIC = os.getenv("AMADEUS_PUBLIC")
 AMADEUS_SECRET = os.getenv("AMADEUS_SECRET")
@@ -315,34 +314,6 @@ def get_hotel_data(
         return {"error": f"Hotel search error: {str(e)}"}
 
 
-# =============================================================================
-# GOOGLE PLACES TOOL
-# =============================================================================
-
-
-def google_places_search(query: str) -> dict:
-    """Search for places using Google Places API."""
-    if not GOOGLE_MAPS_KEY:
-        return {"error": "Google Maps API key not configured."}
-
-    try:
-        response = requests.post(
-            "https://places.googleapis.com/v1/places:searchText",
-            headers={
-                "Content-Type": "application/json",
-                "X-Goog-Api-Key": GOOGLE_MAPS_KEY,
-                "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.priceLevel,places.googleMapsUri,places.rating",
-            },
-            json={"textQuery": query},
-            timeout=10,
-        )
-
-        if response.status_code == 200:
-            return response.json()
-        return {"error": f"Places search failed: {response.status_code}"}
-
-    except Exception as e:
-        return {"error": f"Places search error: {str(e)}"}
 
 
 def serp_search_tool(query: str) -> str:

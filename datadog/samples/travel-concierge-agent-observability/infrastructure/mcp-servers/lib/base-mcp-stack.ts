@@ -102,14 +102,10 @@ export abstract class BaseMcpStack extends cdk.Stack {
     const envVars = {
       AWS_REGION: this.region,
       DD_API_KEY_SECRET_ARN: ddApiKeySecret.secretArn,
-      DD_TRACE_ENABLED: 'true',
-      DD_LLMOBS_ENABLED: '1',
-      DD_LLMOBS_AGENTLESS_ENABLED: '1',
-      DD_LLMOBS_ML_APP: 'travel-concierge-agent',
-      DD_SERVICE: `${props.mcpName}-mcp-server`,
-      DD_ENV: 'demo',
       DD_SITE: 'datadoghq.com',
-      // Disable AgentCore's built-in ADOT — using Datadog instead
+      OTEL_SERVICE_NAME: `${props.mcpName}-mcp-server`,
+      OTEL_SEMCONV_STABILITY_OPT_IN: 'gen_ai_latest_experimental',
+      // Disable AgentCore's built-in ADOT — using Datadog OTEL instead
       DISABLE_ADOT_OBSERVABILITY: 'true',
       ...props.environmentVariables
     };

@@ -31,22 +31,20 @@ USER appuser
 # Expose port for MCP server
 EXPOSE 8000
 
-# Datadog LLM Observability via OTEL
-# ddtrace-run auto-instruments botocore/MCP calls for Datadog
-ENV DD_TRACE_ENABLED=true
-ENV DD_LLMOBS_ENABLED=1
-ENV DD_LLMOBS_AGENTLESS_ENABLED=1
-ENV DD_LLMOBS_ML_APP=travel-concierge-agent
-ENV DD_SERVICE=itinerary-mcp-server
-ENV DD_ENV=demo
+# Datadog LLM Observability via pure OTEL (no ddtrace agent required)
+# dd_init.py configures TracerProvider to export traces to Datadog
 ENV DD_SITE=datadoghq.com
+ENV OTEL_SERVICE_NAME=itinerary-mcp-server
 
-# Disable AgentCore's built-in ADOT — using Datadog instead
+# Disable AgentCore's built-in ADOT — using Datadog OTEL instead
 ENV DISABLE_ADOT_OBSERVABILITY=true
+
+# Required for GenAI semantic conventions (v1.37+)
+ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the MCP server — entrypoint resolves DD_API_KEY then runs ddtrace-run
+# Run the MCP server — entrypoint resolves DD_API_KEY, dd_init.py configures OTEL
 CMD ["bash", "entrypoint.sh"]

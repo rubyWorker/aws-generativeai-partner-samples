@@ -32,18 +32,6 @@ if [ ! -z "$SERP_KEY" ]; then
   echo "✅ SERP API key set"
 fi
 
-# Google Maps API Key
-read -p "Enter Google Maps API Key (or press Enter to skip): " GOOGLE_KEY
-if [ ! -z "$GOOGLE_KEY" ]; then
-  aws ssm put-parameter \
-    --name "/concierge-agent/travel/google-maps-key" \
-    --value "$GOOGLE_KEY" \
-    --type "SecureString" \
-    --overwrite \
-    --region $REGION
-  echo "✅ Google Maps API key set"
-fi
-
 echo ""
 echo "🎉 API keys configuration complete!"
 echo ""

@@ -56,10 +56,6 @@ if [[ -z "$IDENTITY_POOL_ID" ]]; then
     echo "   You can manually set VITE_IDENTITY_POOL_ID in web-ui/.env.local after deployment."
 fi
 
-# Get Google Maps API key from SSM Parameter Store
-echo "📊 Fetching Google Maps API key from SSM..."
-GOOGLE_MAPS_API_KEY=$(aws ssm get-parameter --name "/concierge-agent/travel/google-maps-key" --query "Parameter.Value" --with-decryption --output text 2>/dev/null) || GOOGLE_MAPS_API_KEY=""
-
 REGION=${AWS_REGION:-us-east-1}
 
 # Validate required values
@@ -91,9 +87,6 @@ VITE_GATEWAY_ID=${GATEWAY_ID}
 # Cognito Identity Pool for guest access (AgentCore auth)
 VITE_IDENTITY_POOL_ID=${IDENTITY_POOL_ID}
 VITE_GUEST_ROLE_ARN=${GUEST_ROLE_ARN}
-
-# Google Maps API Key
-VITE_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
 EOF
 
 echo "✅ Created web-ui/.env.local"
@@ -102,12 +95,6 @@ if [[ -n "$IDENTITY_POOL_ID" ]]; then
     echo "✅ Identity Pool ID: ${IDENTITY_POOL_ID}"
 else
     echo "⚠️  Identity Pool ID not found — set VITE_IDENTITY_POOL_ID manually after Amplify deploy"
-fi
-
-if [[ -n "$GOOGLE_MAPS_API_KEY" ]]; then
-    echo "✅ Google Maps API key loaded from SSM"
-else
-    echo "⚠️  Google Maps API key not found in SSM (/concierge-agent/travel/google-maps-key)"
 fi
 
 echo ""

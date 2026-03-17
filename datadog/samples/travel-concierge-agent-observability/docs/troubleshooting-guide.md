@@ -233,7 +233,7 @@ If the error is on a `bedrock.converse` span instead:
 | LLM not extracting required fields | Update the system prompts in subagent files to explicitly instruct the model to include required fields. |
 | DynamoDB schema mismatch | Check the DynamoDB table schema in the Amplify backend (`amplify/data/resource.ts`). Ensure the model allows optional fields or has defaults. |
 | Bedrock throttling | Request a quota increase for your Bedrock model in the AWS console. Or add retry logic with exponential backoff in `gateway_client.py`. |
-| Context propagation gap | Ensure `ddtrace` is patching `requests` / `httpx` in both the supervisor and MCP servers. The `ddtrace-run` wrapper should handle this automatically, but verify with `DD_TRACE_DEBUG=true`. |
+| Context propagation gap | Verify that `dd_init.py` is imported first in every Python entry point and that the OTEL `TracerProvider` is configured correctly. Check container logs for "Datadog LLM Observability configured" messages. |
 
 ---
 
@@ -243,20 +243,19 @@ If the error is on a `bedrock.converse` span instead:
 
 | What You Want | Where to Go | Filter |
 |--------------|-------------|--------|
-| All traces for a user session | APM → Traces | `@user.id:<user-id>` |
-| Slow requests | APM → Traces | `service:supervisor-agent @duration:>10s` |
-| Error traces | APM → Traces | `service:supervisor-agent status:error` |
-| High-token LLM calls | LLM Observability → Traces | `@ml_app:travel-concierge-agent` sort by tokens |
-| Specific MCP tool calls | APM → Traces | `resource_name:travel_flight_search` |
-| Bedrock latency | APM → Traces | `service:supervisor-agent @span.type:llm` |
+| All traces for a user session | LLM Observability → Traces | `@user.id:<user-id>` |
+| Slow requests | LLM Observability → Traces | `service:supervisor-agent @duration:>10s` |
+| Error traces | LLM Observability → Traces | `service:supervisor-agent status:error` |
+| High-token LLM calls | LLM Observability → Traces | `@ml_app:supervisor-agent` sort by tokens |
+| Specific MCP tool calls | LLM Observability → Traces | `resource_name:travel_flight_search` |
+| Bedrock latency | LLM Observability → Traces | `service:supervisor-agent @span.type:llm` |
 
 ### Enabling Debug Logging
 
-To get verbose `ddtrace` output for diagnosing instrumentation issues, set these environment variables in the Dockerfile:
+To get verbose OTEL output for diagnosing instrumentation issues, set the logging level in `dd_init.py` or add environment variables:
 
 ```dockerfile
-ENV DD_TRACE_DEBUG=true
-ENV DD_LOG_LEVEL=DEBUG
+ENV OTEL_LOG_LEVEL=DEBUG
 ```
 
 Then check the container logs:
@@ -272,9 +271,9 @@ aws logs tail /aws/bedrock-agentcore/travel-mcp-server --follow
 
 To confirm traces are flowing from all services:
 
-1. Go to **APM → Service Map**
-2. Verify all three services appear: `supervisor-agent`, `travel-mcp-server`, `itinerary-mcp-server`
-3. Verify edges connect `supervisor-agent` → each MCP server
+1. Go to **Datadog → LLM Observability → Traces**
+2. Verify traces appear for `supervisor-agent`, `travel-mcp-server`, `itinerary-mcp-server`
+3. Verify agent runs include model spans and tool calls in a single trace tree
 4. If a service is missing, check that its container is running and `DD_API_KEY` is set correctly
 
 ### Common Pitfalls
@@ -282,8 +281,8 @@ To confirm traces are flowing from all services:
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | No traces in Datadog | `DD_API_KEY` not set or invalid | Verify the Secrets Manager secret `datadog/aig-agent/api-key` exists and the container has `secretsmanager:GetSecretValue` permission |
-| Traces appear but no LLM spans | `DD_LLMOBS_ENABLED` not set | Confirm the Dockerfile has `ENV DD_LLMOBS_ENABLED=1` |
-| Duplicate or garbled traces | ADOT and ddtrace both instrumenting | Set `DISABLE_ADOT_OBSERVABILITY=true` in Dockerfiles and CDK env vars to disable AgentCore's built-in ADOT pipeline |
-| Separate traces per service (no correlation) | Context propagation broken | Ensure `ddtrace-run` is the entrypoint wrapper and `botocore` + `requests` are being patched |
+| Traces appear but no LLM spans | `OTEL_SEMCONV_STABILITY_OPT_IN` not set | Confirm the Dockerfile has `ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` |
+| Duplicate or garbled traces | ADOT and custom TracerProvider both active | Set `DISABLE_ADOT_OBSERVABILITY=true` in Dockerfiles and CDK env vars to disable AgentCore's built-in ADOT pipeline |
+| Traces not appearing in LLM Observability | Wrong `dd-otlp-source` header | Verify `dd_init.py` sets `dd-otlp-source=llmobs` in the exporter headers (not `datadog`) |
 | LLM spans missing input/output text | Datadog plan limitation | LLM Observability prompt/completion capture requires a Datadog plan that includes LLM Observability |
-| High cardinality warnings | Too many unique resource names | This is normal for LLM workloads — each unique prompt creates a resource. Use `DD_TRACE_RESOURCE_QUERY_STRING_ENABLED=false` if needed |
+| Wrong Datadog region | `DD_SITE` misconfigured | Ensure `DD_SITE` matches your Datadog account region (e.g., `datadoghq.eu` for EU1) |

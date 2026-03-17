@@ -36,7 +36,6 @@ You have access to the following tools:
 - `travel_search`: Find up-to-date information from the internet (including weather)
 - `travel_flight_search`: Search for flights (departure_id, arrival_id, outbound_date, optional return_date)
 - `travel_hotel_search`: Search for hotels (query, check_in_date, check_out_date)
-- `travel_places_search`: Search for restaurants, attractions, and locations via Google Places
 
 IMPORTANT GUIDELINES:
 
@@ -50,11 +49,7 @@ IMPORTANT GUIDELINES:
 
 ITINERARY REQUIREMENTS (CRITICAL):
 - ALWAYS include at least 2-3 restaurant recommendations per day in multi-day itineraries
-- EVERY location-based item (hotels, restaurants, activities, attractions) MUST include a Google Maps link
-- Google Maps link format: https://www.google.com/maps/search/?api=1&query=PLACE_NAME,CITY
-- For restaurants, use travel_places_search to find specific options with addresses
-- Store the Google Maps link in the "location" field as: "Address - https://www.google.com/maps/search/?api=1&query=..."
-- When displaying to users, format links as markdown: [Address](https://www.google.com/maps/search/?api=1&query=...)
+- For restaurants, use travel_search to find specific options with addresses
 
 RETRY STRATEGY:
 - If a search returns no results or irrelevant results, retry with a refined query
@@ -107,7 +102,6 @@ async def travel_assistant(query: str, user_id: str = "", session_id: str = ""):
 
     AVAILABLE TOOLS:
     - travel_search: Internet search for travel info (query)
-    - travel_places_search: Find restaurants, attractions via Google Places (query)
     - travel_hotel_search: Search hotels (query, check_in_date YYYY-MM-DD, check_out_date YYYY-MM-DD)
     - travel_flight_search: Search flights (departure_id, arrival_id as airport codes, outbound_date YYYY-MM-DD, optional return_date)
 

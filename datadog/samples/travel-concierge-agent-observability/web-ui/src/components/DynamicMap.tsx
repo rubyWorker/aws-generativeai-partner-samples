@@ -20,10 +20,9 @@ const DynamicMap: React.FC<DynamicMapProps> = ({
   longitude, 
   attractions = [] 
 }) => {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   const mapUrl = latitude && longitude
-    ? `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${latitude},${longitude}&zoom=13`
-    : `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(destination)}`;
+    ? `https://www.openstreetmap.org/export/embed.html?bbox=${longitude - 0.05},${latitude - 0.03},${longitude + 0.05},${latitude + 0.03}&layer=mapnik&marker=${latitude},${longitude}`
+    : `https://www.openstreetmap.org/export/embed.html?bbox=-180,-60,180,75&layer=mapnik`;
 
   return (
     <div className="bg-white rounded-md shadow-sm mb-6 overflow-hidden">
