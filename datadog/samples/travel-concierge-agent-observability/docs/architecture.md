@@ -10,7 +10,7 @@ graph TB
     end
 
     subgraph AgentCore Runtime
-        Supervisor[Supervisor Agent<br/>Strands Agent + ddtrace<br/><i>DD_SERVICE=supervisor-agent</i>]
+        Supervisor[Supervisor Agent<br/>Strands Agent + OTEL<br/><i>OTEL_SERVICE_NAME=supervisor-agent</i>]
         TravelSub[travel_assistant<br/>Strands Subagent]
     end
 
@@ -19,8 +19,8 @@ graph TB
     end
 
     subgraph MCP Servers — AgentCore Runtime
-        TravelMCP[Travel MCP Server<br/>ddtrace<br/><i>DD_SERVICE=travel-mcp-server</i>]
-        ItineraryMCP[Itinerary MCP Server<br/>ddtrace<br/><i>DD_SERVICE=itinerary-mcp-server</i>]
+        TravelMCP[Travel MCP Server<br/>OTEL TracerProvider<br/><i>OTEL_SERVICE_NAME=travel-mcp-server</i>]
+        ItineraryMCP[Itinerary MCP Server<br/>OTEL TracerProvider<br/><i>OTEL_SERVICE_NAME=itinerary-mcp-server</i>]
     end
 
     subgraph AWS Services
@@ -30,12 +30,11 @@ graph TB
     end
 
     subgraph Datadog
-        DDAPM[Datadog APM<br/>Distributed Traces]
-        DDLLM[Datadog LLM Observability<br/>Prompts · Tokens · Latency]
+        DDLLM[Datadog LLM Observability<br/>Prompts · Tokens · Latency · Tool Calls]
     end
 
     User -->|HTTPS| WebUI
-    WebUI -->|API Key Auth| Supervisor
+    WebUI -->|SigV4 Auth| Supervisor
     Supervisor --> TravelSub
     Supervisor -->|Itinerary tools| GW
     TravelSub -->|travel tools| GW
@@ -47,17 +46,16 @@ graph TB
     ItineraryMCP --> DDB
     Supervisor --> Memory
 
-    Supervisor -.->|agentless traces| DDAPM
-    TravelMCP -.->|agentless traces| DDAPM
-    ItineraryMCP -.->|agentless traces| DDAPM
-    DDAPM --> DDLLM
+    Supervisor -.->|OTLP over HTTPS| DDLLM
+    TravelMCP -.->|OTLP over HTTPS| DDLLM
+    ItineraryMCP -.->|OTLP over HTTPS| DDLLM
 
     classDef dd fill:#632CA6,stroke:#632CA6,color:#fff
     classDef aws fill:#FF9900,stroke:#FF9900,color:#fff
     classDef agent fill:#1A73E8,stroke:#1A73E8,color:#fff
     classDef mcp fill:#0D652D,stroke:#0D652D,color:#fff
 
-    class DDAPM,DDLLM dd
+    class DDLLM dd
     class Bedrock,DDB,Memory aws
     class Supervisor,TravelSub agent
     class TravelMCP,ItineraryMCP mcp
@@ -75,7 +73,7 @@ sequenceDiagram
     participant GW as AgentCore Gateway
     participant TMCP as Travel MCP Server
     participant B as Amazon Bedrock
-    participant DD as Datadog
+    participant DD as Datadog LLM Obs
 
     U->>S: "Find flights from NYC to Tokyo"
     activate S
@@ -110,13 +108,13 @@ sequenceDiagram
     S-->>U: "Here are 5 flights from NYC to Tokyo..."
     deactivate S
 
-    S-.>>DD: Trace (agentless)
-    TMCP-.>>DD: Trace (agentless)
+    S-.>>DD: OTLP traces
+    TMCP-.>>DD: OTLP traces
 ```
 
 ## Trace Hierarchy (Span Tree)
 
-When viewed in Datadog APM, a typical request produces the following span hierarchy:
+When viewed in Datadog LLM Observability, a typical request produces the following span hierarchy:
 
 ```
 supervisor-agent                                    [root span — full request duration]
@@ -134,44 +132,59 @@ supervisor-agent                                    [root span — full request 
 └── total_tokens: ~5650
 ```
 
-## Datadog Collection — Agentless Mode
+## OTEL Collection — Direct OTLP Export
 
-All services use **agentless mode** (`DD_LLMOBS_AGENTLESS_ENABLED=1`), meaning traces are sent directly to Datadog's intake API over HTTPS without requiring a Datadog Agent sidecar container.
+All services use a custom OpenTelemetry `TracerProvider` with `OTLPSpanExporter` to send traces directly to Datadog's OTLP intake endpoint over HTTPS. No Datadog Agent sidecar is required.
 
 ```mermaid
 graph LR
     subgraph AgentCore Runtime Containers
-        SA[supervisor-agent<br/>ddtrace-run python agent.py]
-        T[travel-mcp-server<br/>ddtrace-run python server.py]
-        I[itinerary-mcp-server<br/>ddtrace-run python server.py]
+        SA[supervisor-agent<br/>python agent.py]
+        T[travel-mcp-server<br/>python server.py]
+        I[itinerary-mcp-server<br/>python server.py]
     end
 
-    subgraph Datadog Intake
-        API[Datadog API<br/>https://api.datadoghq.com]
+    subgraph dd_init.py — OTEL Configuration
+        TP[TracerProvider<br/>+ OTLPSpanExporter<br/>+ SimpleSpanProcessor]
     end
 
-    SA -->|HTTPS / DD_API_KEY| API
-    T -->|HTTPS / DD_API_KEY| API
-    I -->|HTTPS / DD_API_KEY| API
+    subgraph Datadog OTLP Intake
+        API["https://trace.agent.{DD_SITE}/v1/traces<br/>Headers: dd-api-key, dd-otlp-source=llmobs"]
+    end
+
+    SA --> TP
+    T --> TP
+    I --> TP
+    TP -->|OTLP/HTTP| API
 ```
 
 Each container's Dockerfile sets the required environment variables:
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-| `DD_TRACE_ENABLED` | `true` | Enable APM tracing |
-| `DD_LLMOBS_ENABLED` | `1` | Enable LLM Observability |
-| `DD_LLMOBS_AGENTLESS_ENABLED` | `1` | Send traces directly (no sidecar) |
-| `DD_LLMOBS_ML_APP` | `travel-concierge-agent` | Groups all services under one LLM app |
-| `DD_SERVICE` | `supervisor-agent` / `travel-mcp-server` / etc. | Per-service name in APM |
-| `DD_ENV` | `demo` | Environment tag |
-| `DD_API_KEY` | *(from Secrets Manager)* | Datadog API key for authentication |
+| `DD_SITE` | `datadoghq.com` | Datadog site/region (determines OTLP endpoint) |
+| `OTEL_SERVICE_NAME` | `supervisor-agent` / `travel-mcp-server` / etc. | Per-service name in LLM Observability |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | `gen_ai_latest_experimental` | Enables GenAI semantic conventions (v1.37+) |
+| `DISABLE_ADOT_OBSERVABILITY` | `true` | Disables AgentCore's built-in ADOT pipeline |
+| `DD_API_KEY` | *(from Secrets Manager)* | Datadog API key for OTLP authentication |
 
-The `DD_API_KEY` is retrieved at deploy time from AWS Secrets Manager (`datadog/aig-agent/api-key`) and injected into the container environment via the CDK stacks.
+The `DD_API_KEY` is retrieved at runtime from AWS Secrets Manager (`datadog/aig-agent/api-key`) by `entrypoint.sh` and used by `dd_init.py` to configure the `OTLPSpanExporter` headers.
+
+### How dd_init.py Works
+
+Each Python entry point imports `dd_init` as its first import. The module:
+
+1. Sets `DISABLE_ADOT_OBSERVABILITY=true` and `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` via `os.environ.setdefault()`
+2. Resolves `DD_API_KEY` from Secrets Manager (backup — `entrypoint.sh` does this first)
+3. Creates an OpenTelemetry `Resource` with `service.name` from `OTEL_SERVICE_NAME`
+4. Creates an `OTLPSpanExporter` targeting `https://trace.agent.{DD_SITE}/v1/traces` with headers `dd-api-key` and `dd-otlp-source=llmobs`
+5. Creates a `TracerProvider` with a `SimpleSpanProcessor` and sets it as the global tracer provider
+
+Once the `TracerProvider` is set, `strands-agents[otel]` automatically emits GenAI spans for every agent decision, planner step, tool call, and LLM invocation.
 
 ## Service Map
 
-In Datadog APM → Service Map, the deployed system renders as:
+In Datadog LLM Observability, the deployed system renders as:
 
 ```
 ┌─────────────────────┐
@@ -194,4 +207,4 @@ In Datadog APM → Service Map, the deployed system renders as:
 └──────────────────────────────────────────────────────────┘
 ```
 
-All services share `DD_LLMOBS_ML_APP=travel-concierge-agent`, which groups them together in the Datadog LLM Observability UI for unified monitoring.
+All services share the same `DD_SITE` and `DD_API_KEY`, and their `OTEL_SERVICE_NAME` values distinguish them in the Datadog LLM Observability UI.

@@ -12,7 +12,6 @@ export class TravelStack extends BaseMcpStack {
         '/concierge-agent/travel/openweather-api-key',
         '/concierge-agent/travel/tavily-api-key',
         '/concierge-agent/travel/serp-api-key',
-        '/concierge-agent/travel/google-maps-key',
         '/concierge-agent/travel/amadeus-public',
         '/concierge-agent/travel/amadeus-secret'
       ]

@@ -5,7 +5,7 @@ Exposes itinerary management tools via MCP protocol.
 No agent logic - just pure tool implementations.
 """
 
-import dd_init  # noqa: F401 - must be first import to resolve DD_API_KEY before ddtrace
+import dd_init  # noqa: F401 - must be first import to configure OTEL TracerProvider
 import os
 import logging
 from typing import List, Dict, Any

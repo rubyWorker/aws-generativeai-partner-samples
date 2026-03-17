@@ -5,7 +5,7 @@ Exposes raw travel-related tools via MCP protocol.
 No agent logic - just pure tool implementations.
 """
 
-import dd_init  # noqa: F401 - must be first import to resolve DD_API_KEY before ddtrace
+import dd_init  # noqa: F401 - must be first import to configure OTEL TracerProvider
 import os
 import logging
 import boto3
@@ -46,7 +46,6 @@ def load_api_keys():
         "OPENWEATHER_API_KEY": "/concierge-agent/travel/openweather-api-key",
         # "TAVILY_API_KEY": "/concierge-agent/travel/tavily-api-key",
         "SERP_API_KEY": "/concierge-agent/travel/serp-api-key",
-        "GOOGLE_MAPS_KEY": "/concierge-agent/travel/google-maps-key",
         # "AMADEUS_PUBLIC": "/concierge-agent/travel/amadeus-public",
         # "AMADEUS_SECRET": "/concierge-agent/travel/amadeus-secret",
     }
@@ -71,7 +70,6 @@ from tools import (  # noqa: E402
     # get_flight_offers,
     serp_flight_search,
     # get_hotel_data,
-    google_places_search,
 )
 
 
@@ -152,21 +150,6 @@ def travel_search(query: str) -> str:
 #         Hotel listings with names, ratings, and amenities.
 #     """
 #     return get_hotel_data(city_code, ratings, amenities)
-
-
-@mcp.tool()
-def travel_places_search(query: str) -> dict:
-    """
-    Search for places, restaurants, and attractions using Google Places.
-
-    Args:
-        query: Search query (e.g., "best sushi restaurants in Tokyo",
-               "museums near Eiffel Tower", "coffee shops in Seattle")
-
-    Returns:
-        Places with names, addresses, ratings, and Google Maps links.
-    """
-    return google_places_search(query)
 
 
 @mcp.tool()

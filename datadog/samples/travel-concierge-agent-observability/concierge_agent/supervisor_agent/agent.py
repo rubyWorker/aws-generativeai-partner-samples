@@ -1,4 +1,4 @@
-import dd_init  # noqa: F401 - must be first import to resolve DD_API_KEY before ddtrace
+import dd_init  # noqa: F401 - must be first import to configure OTEL TracerProvider
 import os
 import logging
 import boto3

@@ -2,14 +2,14 @@
 
 End-to-end observability for a multi-agent AI travel concierge, powered by [Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/) and [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html).
 
-> **Note:** This sample is forked from the upstream [travel-concierge-agent](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/05-blueprints/travel-concierge-agent) blueprint and adds Datadog observability using the [AgentCore OTEL integration](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html) with `ddtrace`.
+> **Note:** This sample is forked from the upstream [travel-concierge-agent](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/05-blueprints/travel-concierge-agent) blueprint and adds Datadog observability using a pure OpenTelemetry approach — no Datadog Agent or `ddtrace` required.
 
 ## What This Sample Demonstrates
 
-- **OTEL-native LLM Observability** — Strands Agents emits [OpenTelemetry-compliant spans](https://www.datadoghq.com/blog/llm-aws-strands/) (GenAI semantic conventions) via `strands-agents[otel]`; Datadog's `ddtrace` auto-instruments and sends them to [Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/setup/auto_instrumentation/)
+- **Pure OTEL LLM Observability** — Strands Agents emits [OpenTelemetry-compliant spans](https://www.datadoghq.com/blog/llm-aws-strands/) (GenAI semantic conventions) via `strands-agents[otel]`; a custom `TracerProvider` with `OTLPSpanExporter` sends them directly to [Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation/)
 - **AgentCore Integration** — Uses AgentCore's documented approach for [third-party observability platforms](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html): `DISABLE_ADOT_OBSERVABILITY=true` disables the built-in ADOT/CloudWatch pipeline so Datadog is the sole observability backend
-- **APM Distributed Tracing** — A single user request produces a unified trace spanning `supervisor-agent` → `travel-mcp-server` / `itinerary-mcp-server` → Amazon Bedrock
-- **Agentless Collection** — All traces are sent directly to Datadog's intake API over HTTPS — no Datadog Agent sidecar required
+- **No Datadog Agent Required** — All traces are exported directly to Datadog's OTLP intake endpoint over HTTPS using `dd-otlp-source=llmobs` headers, which routes them to [Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/) views
+- **GenAI Semantic Conventions** — `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` enables OpenTelemetry v1.37+ GenAI semantic conventions for LLM-specific trace views (prompts, completions, token usage, latency)
 - **Troubleshooting Workflows** — Three documented scenarios showing how to debug slow tool calls, high token usage, and agent errors using Datadog's trace waterfall and LLM Observability views
 
 ## Architecture
@@ -21,24 +21,27 @@ The system uses a supervisor pattern: a Strands Agent (Claude Sonnet 4.5) delega
 For the full architecture diagram with Mermaid diagrams, trace flow, and span hierarchy, see **[docs/architecture.md](docs/architecture.md)**.
 
 ```
-User → Web UI → (SigV4 via Cognito guest creds) → AgentCore Runtime (Supervisor + ddtrace + OTEL spans)
+User → Web UI → (SigV4 via Cognito guest creds) → AgentCore Runtime (Supervisor + OTEL TracerProvider)
                                                           │
-                                                          ├── travel_assistant → AgentCore Gateway → Travel MCP Server (ddtrace)
-                                                          └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (ddtrace)
+                                                          ├── travel_assistant → AgentCore Gateway → Travel MCP Server (OTEL)
+                                                          └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (OTEL)
                                                                                                            │
                                                                                                      Amazon Bedrock
                                                                                                     (Claude Sonnet 4.5)
 
         DISABLE_ADOT_OBSERVABILITY=true  (AgentCore's built-in CloudWatch pipeline is off)
-        All services ──(agentless HTTPS)──→ Datadog LLM Observability
+        All services ──(OTLP over HTTPS)──→ Datadog LLM Observability
 ```
 
 ### How the OTEL Integration Works
 
-1. **`strands-agents[otel]`** — Installed in the supervisor agent, this makes Strands emit OTEL-compliant spans following [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for every agent decision, planner step, tool call, and LLM invocation
-2. **`ddtrace`** — Datadog's tracer [auto-instruments Strands Agents](https://docs.datadoghq.com/llm_observability/setup/auto_instrumentation/) (>= 1.11.0), capturing those OTEL spans and forwarding them to Datadog LLM Observability
-3. **`DISABLE_ADOT_OBSERVABILITY=true`** — Per [AgentCore docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html), this disables the default ADOT/CloudWatch pipeline so `ddtrace` is the sole instrumentation layer
-4. **Agentless mode** — `DD_LLMOBS_AGENTLESS_ENABLED=1` sends traces directly to Datadog's intake API over HTTPS, no Datadog Agent sidecar needed
+Following the pattern from [PR #1097](https://github.com/awslabs/amazon-bedrock-agentcore-samples/pull/1097):
+
+1. **`dd_init.py`** — Imported first in every Python entry point. Creates a custom OpenTelemetry `TracerProvider` with an `OTLPSpanExporter` that sends traces to `https://trace.agent.{DD_SITE}/v1/traces` with headers `dd-api-key` and `dd-otlp-source=llmobs`
+2. **`strands-agents[otel]`** — Installed in the supervisor agent, this makes Strands automatically emit OTEL-compliant spans following [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) when a `TracerProvider` is set
+3. **`OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`** — Enables the GenAI semantic conventions required by Strands Agents (v1.37+)
+4. **`DISABLE_ADOT_OBSERVABILITY=true`** — Per [AgentCore docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html), this disables the default ADOT/CloudWatch pipeline so the custom `TracerProvider` is the sole instrumentation layer
+5. **`DD_API_KEY`** — Resolved at runtime from AWS Secrets Manager via `entrypoint.sh` (with a backup resolution in `dd_init.py`)
 
 ## Prerequisites
 
@@ -54,7 +57,7 @@ User → Web UI → (SigV4 via Cognito guest creds) → AgentCore Runtime (Super
 
 ### Datadog Secrets Setup
 
-The Datadog API key must be stored in AWS Secrets Manager before deployment. The CDK stacks reference this secret to inject `DD_API_KEY` into the container environment at runtime via `entrypoint.sh`.
+The Datadog API key must be stored in AWS Secrets Manager before deployment. The CDK stacks reference this secret to inject `DD_API_KEY_SECRET_ARN` into the container environment. At runtime, `entrypoint.sh` and `dd_init.py` resolve the actual key.
 
 ```bash
 # Verify the secret exists
@@ -71,12 +74,12 @@ cd amplify && npm install && cd ..
 # 2. Deploy Amplify backend (DynamoDB, AppSync, Cognito Identity Pool)
 npm run deploy:amplify
 
-# 3. Deploy MCP servers (Travel, Itinerary — each with ddtrace)
+# 3. Deploy MCP servers (Travel, Itinerary — each with OTEL TracerProvider)
 # If using Finch instead of Docker:
 export CDK_DOCKER=finch
 npm run deploy:mcp
 
-# 4. Deploy supervisor agent (with strands-agents[otel] + ddtrace)
+# 4. Deploy supervisor agent (with strands-agents[otel] + OTEL TracerProvider)
 npm run deploy:agent
 
 # 5. Configure web UI environment (auto-populates from CloudFormation outputs)
@@ -109,57 +112,65 @@ Running `./scripts/setup-web-ui-env.sh --force` will auto-populate this from Clo
 
 ### Datadog Environment Variables
 
-Each container's Dockerfile includes the Datadog instrumentation configuration. These are baked into the image and do not need to be set manually:
+Each container's Dockerfile includes the Datadog and OTEL configuration. These are baked into the image and do not need to be set manually:
 
 ```dockerfile
-# Datadog LLM Observability via OTEL
-ENV DD_TRACE_ENABLED=true
-ENV DD_LLMOBS_ENABLED=1
-ENV DD_LLMOBS_AGENTLESS_ENABLED=1
-ENV DD_LLMOBS_ML_APP=travel-concierge-agent
-ENV DD_SERVICE=supervisor-agent          # varies per container
-ENV DD_ENV=demo
+# Datadog LLM Observability via pure OTEL (no ddtrace agent required)
 ENV DD_SITE=datadoghq.com
+ENV OTEL_SERVICE_NAME=supervisor-agent          # varies per container
+ENV OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
 
-# Disable AgentCore's built-in ADOT — using Datadog instead
+# Disable AgentCore's built-in ADOT — using Datadog OTEL instead
 ENV DISABLE_ADOT_OBSERVABILITY=true
 ```
 
-Per the [AgentCore docs on using other observability platforms](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html), `DISABLE_ADOT_OBSERVABILITY=true` unsets AgentCore's default ADOT environment variables so `ddtrace` is the sole instrumentation layer.
+Per the [AgentCore docs on using other observability platforms](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html), `DISABLE_ADOT_OBSERVABILITY=true` disables AgentCore's default ADOT environment variables so the custom OTEL `TracerProvider` is the sole instrumentation layer.
 
-The `DD_API_KEY` is resolved at runtime from Secrets Manager. Each container uses an `entrypoint.sh` that fetches the key before launching `ddtrace-run`:
+The `DD_API_KEY` is resolved at runtime from Secrets Manager. Each container uses an `entrypoint.sh` that fetches the key before launching:
 
 ```bash
 # entrypoint.sh resolves DD_API_KEY, then:
-exec ddtrace-run python agent.py   # supervisor
-exec ddtrace-run python server.py  # MCP servers
+exec python agent.py   # supervisor
+exec python server.py  # MCP servers
 ```
 
-The `dd_init.py` module (imported first in each Python entry point) provides a backup resolution of `DD_API_KEY` and calls `LLMObs.enable()` to activate Datadog LLM Observability.
+The `dd_init.py` module (imported first in each Python entry point) provides a backup resolution of `DD_API_KEY` and configures the OpenTelemetry `TracerProvider` with an `OTLPSpanExporter` targeting Datadog's OTLP intake.
 
 ### Verifying Traces
 
 After deploying and sending a test message through the Web UI:
 
-1. Open **Datadog → APM → Traces**
-2. Filter by `service:supervisor-agent`
-3. You should see traces with child spans for subagent delegations, MCP tool calls, and Bedrock LLM invocations
-4. Open **Datadog → LLM Observability** and filter by `ml_app:travel-concierge-agent` to see prompts, completions, and token usage
+1. Open **Datadog → LLM Observability → Traces**
+2. Search for `ml_app:supervisor-agent` (or the `OTEL_SERVICE_NAME` value)
+3. You should see traces with agent runs, model spans, and tool calls connected in a single end-to-end trace
+4. Each trace includes prompts, completions, token usage, latency, and tool execution details
+
+### Datadog Site Configuration
+
+For Datadog regions other than US1, set `DD_SITE` in the Dockerfile or CDK env vars:
+
+| Region | DD_SITE |
+|--------|---------|
+| US1 (default) | `datadoghq.com` |
+| US3 | `us3.datadoghq.com` |
+| US5 | `us5.datadoghq.com` |
+| EU1 | `datadoghq.eu` |
+| AP1 | `ap1.datadoghq.com` |
 
 ## Project Structure
 
 ```
 travel-concierge-agent-observability/
 ├── concierge_agent/
-│   ├── supervisor_agent/          # Supervisor agent (Strands + strands-agents[otel] + ddtrace)
-│   │   ├── Dockerfile             # ddtrace-run entrypoint, DISABLE_ADOT_OBSERVABILITY=true
-│   │   ├── dd_init.py             # Resolves DD_API_KEY + enables LLMObs
-│   │   ├── entrypoint.sh          # Resolves DD_API_KEY from Secrets Manager, runs ddtrace-run
+│   ├── supervisor_agent/          # Supervisor agent (Strands + strands-agents[otel] + OTEL)
+│   │   ├── Dockerfile             # OTEL env vars, DISABLE_ADOT_OBSERVABILITY=true
+│   │   ├── dd_init.py             # Resolves DD_API_KEY + configures OTEL TracerProvider → Datadog
+│   │   ├── entrypoint.sh          # Resolves DD_API_KEY from Secrets Manager, runs python agent.py
 │   │   ├── agent.py               # Main agent with BedrockModel (Claude 4.5)
 │   │   ├── travel_subagent.py     # Travel planning subagent
-│   │   └── gateway_client.py      # MCP Gateway client (OAuth2)
-│   ├── mcp_travel_tools/          # Travel MCP server (ddtrace)
-│   └── mcp_itinerary_tools/       # Itinerary MCP server (ddtrace)
+│   │   └── gateway_client.py      # MCP Gateway client
+│   ├── mcp_travel_tools/          # Travel MCP server (OTEL TracerProvider)
+│   └── mcp_itinerary_tools/       # Itinerary MCP server (OTEL TracerProvider)
 ├── infrastructure/
 │   ├── agent-stack/               # CDK for supervisor agent + gateway
 │   ├── mcp-servers/               # CDK for MCP server runtimes
@@ -178,7 +189,7 @@ travel-concierge-agent-observability/
 
 | Document | Description |
 |----------|-------------|
-| **[Architecture](docs/architecture.md)** | Mermaid diagrams: system architecture, distributed trace flow, span hierarchy, agentless collection |
+| **[Architecture](docs/architecture.md)** | Mermaid diagrams: system architecture, distributed trace flow, span hierarchy, OTEL collection |
 | **[Troubleshooting Guide](docs/troubleshooting-guide.md)** | Three scenarios: slow flight search, high token usage, agent error debugging |
 | **[Deployment Guide](DEPLOYMENT.md)** | Step-by-step deployment instructions, configuration, and cleanup |
 | **[PRD](PRD.md)** | Product requirements document for this observability sample |
@@ -186,11 +197,19 @@ travel-concierge-agent-observability/
 
 ## Instrumented Services
 
-| Service | Container | DD_SERVICE | Instrumentation |
-|---------|-----------|------------|-----------------|
-| Supervisor Agent | `concierge_agent/supervisor_agent` | `supervisor-agent` | `strands-agents[otel]` emits OTEL spans; `ddtrace-run` auto-instruments Strands (>= 1.11.0), `botocore` (Bedrock calls) |
-| Travel MCP Server | `concierge_agent/mcp_travel_tools` | `travel-mcp-server` | `ddtrace-run` auto-instruments `botocore` + `requests` (SerpAPI, Google Maps) + `mcp` |
-| Itinerary MCP Server | `concierge_agent/mcp_itinerary_tools` | `itinerary-mcp-server` | `ddtrace-run` auto-instruments `botocore` (DynamoDB) + `mcp` |
+| Service | Container | OTEL_SERVICE_NAME | Instrumentation |
+|---------|-----------|-------------------|-----------------|
+| Supervisor Agent | `concierge_agent/supervisor_agent` | `supervisor-agent` | `strands-agents[otel]` emits OTEL GenAI spans; `OTLPSpanExporter` sends to Datadog |
+| Travel MCP Server | `concierge_agent/mcp_travel_tools` | `travel-mcp-server` | `OTLPSpanExporter` sends traces to Datadog (botocore, requests, MCP calls) |
+| Itinerary MCP Server | `concierge_agent/mcp_itinerary_tools` | `itinerary-mcp-server` | `OTLPSpanExporter` sends traces to Datadog (botocore/DynamoDB, MCP calls) |
+
+## Key Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `strands-agents[otel]` | Strands agent framework with OTEL span emission |
+| `opentelemetry-sdk` | OpenTelemetry SDK for TracerProvider and span processing |
+| `opentelemetry-exporter-otlp-proto-http` | OTLP HTTP exporter to send traces to Datadog |
 
 ## Cleanup
 

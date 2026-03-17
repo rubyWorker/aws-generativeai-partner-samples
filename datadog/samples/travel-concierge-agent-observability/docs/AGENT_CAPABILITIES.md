@@ -95,35 +95,31 @@ The Travel Assistant specializes in all travel-related queries including destina
 - Provides daily forecasts with temperature, conditions, and descriptions
 
 #### 2. Internet Search
-**`search_tool(query)`**
-- Performs web searches using Tavily API
-- Returns formatted results with titles, content, and sources
-- Useful for destination research, travel tips, and current information
+**`travel_search(query)`**
+- Performs web searches using SerpAPI (Google Search engine)
+- Returns formatted results with titles, snippets, and source URLs
+- Useful for destination research, travel tips, weather, and current information
 
-#### 3. Local Places Search
-**`google_places_tool(query)`**
-- Searches Google Places API for local businesses and attractions
-- Returns detailed place information including ratings, addresses, and photos
+#### 3. Hotel Search
+**`travel_hotel_search(query, check_in_date, check_out_date)`**
+- Searches Google Hotels via SerpAPI for hotel options
+- Returns ratings, prices, amenities, and booking links
+- Supports natural language queries (e.g., "fancy hotels in Paris")
 
 #### 4. Flight Search
-**`get_flight_offers_tool(origin, destination, departure_date, adults, max_price, currency)`**
-- Searches Amadeus API for flight offers
-- Filters by price, number of passengers, and currency
-- Supports IATA airport codes (e.g., JFK, LAX, LHR)
-
-#### 5. Hotel Search
-**`get_hotel_data_tool(city_code, ratings, amenities, max_price)`**
-- Searches Amadeus API for hotels in a city
-- Filters by star rating, amenities, and price
+**`travel_flight_search(departure_id, arrival_id, outbound_date, return_date)`**
+- Searches Google Flights via SerpAPI for flight options
+- Returns prices, durations, layovers, and carbon emissions
+- Supports 3-letter airport codes (e.g., JFK, LAX, CDG)
 
 ### Workflow Example
 
 **User:** "Plan a 3-day trip to Paris in December"
 
-1. **Weather Check**: Travel Assistant uses `get_weather("Paris")` to check conditions
-2. **Flight Search**: Uses `get_flight_offers_tool()` to find flights
-3. **Hotel Search**: Uses `get_hotel_data_tool("PAR")` to find accommodations
-4. **Local Research**: Uses `search_tool()` and `google_places_tool()` for attractions
+1. **Weather Check**: Travel Assistant uses `travel_search("Paris weather December")` to check conditions
+2. **Flight Search**: Uses `travel_flight_search()` to find flights
+3. **Hotel Search**: Uses `travel_hotel_search()` to find accommodations
+4. **Local Research**: Uses `travel_search()` for attractions and restaurants
 5. **Itinerary Creation**: Compiles all information into structured itinerary
 6. **Handoff to Supervisor**: Returns complete itinerary to Supervisor
 7. **Save**: Supervisor calls `save_itinerary()` to persist the plan
@@ -159,6 +155,6 @@ The Travel Assistant specializes in all travel-related queries including destina
 | Agent | Tool Count | Primary Functions |
 |-------|-----------|-------------------|
 | **Supervisor** | 2 | Itinerary management, orchestration |
-| **Travel Assistant** | 5 | Search, weather, flights, hotels, places |
+| **Travel Assistant** | 3 | Search, flights, hotels |
 
-**Total Tools**: 7 specialized tools working together to provide comprehensive travel planning assistance.
+**Total Tools**: 5 specialized tools working together to provide comprehensive travel planning assistance.

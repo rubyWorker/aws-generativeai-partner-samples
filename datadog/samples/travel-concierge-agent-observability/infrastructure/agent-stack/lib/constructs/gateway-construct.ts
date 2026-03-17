@@ -30,15 +30,6 @@ const TRAVEL_TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'travel_places_search',
-    description: 'Search for places, restaurants, and attractions using Google Places.',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: 'Search query' } },
-      required: ['query'],
-    },
-  },
-  {
     name: 'travel_hotel_search',
     description: 'Search for hotels using Google Hotels via SerpAPI.',
     inputSchema: {
@@ -300,7 +291,11 @@ export class GatewayConstruct extends Construct {
 
       // Grant the proxy Lambda permission to invoke the AgentCore Runtime
       proxyFn.addToRolePolicy(new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:InvokeRuntime', 'bedrock-agentcore:InvokeRuntimeWithResponseStream'],
+        actions: [
+          'bedrock-agentcore:InvokeRuntime',
+          'bedrock-agentcore:InvokeRuntimeWithResponseStream',
+          'bedrock-agentcore:InvokeAgentRuntime',
+        ],
         resources: [mcpRuntime.arn],
       }));
 
