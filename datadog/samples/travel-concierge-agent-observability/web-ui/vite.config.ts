@@ -12,5 +12,12 @@ export default defineConfig({
     https: true,
     port: 9000,
     host: 'localhost',
+    proxy: {
+      '/api/agentcore': {
+        target: 'https://bedrock-agentcore.us-east-2.amazonaws.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/agentcore/, ''),
+      },
+    },
   }
 })

@@ -11,7 +11,8 @@ const AGENT_CONFIG = {
 };
 
 // Bedrock Agent Core endpoint
-const BEDROCK_AGENT_CORE_ENDPOINT_URL = `https://bedrock-agentcore.${AGENT_CONFIG.AWS_REGION}.amazonaws.com`;
+const BEDROCK_AGENT_CORE_REAL_URL = `https://bedrock-agentcore.${AGENT_CONFIG.AWS_REGION}.amazonaws.com`;
+const BEDROCK_AGENT_CORE_ENDPOINT_URL = import.meta.env.DEV ? '/api/agentcore' : BEDROCK_AGENT_CORE_REAL_URL;
 
 // --- SigV4 signing utilities ---
 async function sha256Hash(data: string): Promise<ArrayBuffer> {
@@ -261,7 +262,9 @@ export const invokeAgentCore = async (
     const escapedAgentArn = encodeURIComponent(AGENT_CONFIG.AGENT_RUNTIME_ARN);
     
     // Construct the URL
-    const url = `${BEDROCK_AGENT_CORE_ENDPOINT_URL}/runtimes/${escapedAgentArn}/invocations?qualifier=${AGENT_CONFIG.AGENT_ENDPOINT_NAME}`;
+    const urlPath = `/runtimes/${escapedAgentArn}/invocations?qualifier=${AGENT_CONFIG.AGENT_ENDPOINT_NAME}`;
+    const signUrl = `${BEDROCK_AGENT_CORE_REAL_URL}${urlPath}`;
+    const fetchUrl = `${BEDROCK_AGENT_CORE_ENDPOINT_URL}${urlPath}`;
 
     // Generate a proper trace ID
     const traceId = `1-${Math.floor(Date.now() / 1000).toString(16)}-${generateId()}`;
@@ -298,7 +301,7 @@ export const invokeAgentCore = async (
       );
     }
     const creds = await getGuestCredentials();
-    await signRequest('POST', url, headers, bodyStr, creds, AGENT_CONFIG.AWS_REGION, 'bedrock-agentcore');
+    await signRequest('POST', signUrl, headers, bodyStr, creds, AGENT_CONFIG.AWS_REGION, 'bedrock-agentcore');
 
     console.log('Agent Core Payload:', payload);
 
@@ -306,7 +309,7 @@ export const invokeAgentCore = async (
     delete headers['host'];
 
     // Make HTTP request with streaming
-    const response = await fetch(url, {
+    const response = await fetch(fetchUrl, {
       method: 'POST',
       headers,
       body: bodyStr,

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from strands import Agent, tool
 from strands.models import BedrockModel
+from botocore.config import Config
 from strands.tools.mcp import MCPClient
 
 from gateway_client import get_gateway_client
@@ -87,6 +88,8 @@ bedrock_model = BedrockModel(
     model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     region_name=REGION,
     temperature=0.2,
+    max_tokens=4096,
+    boto_client_config=Config(retries={"mode": "adaptive", "max_attempts": 5}),
 )
 
 

@@ -285,6 +285,31 @@ docker build -t test-build .
 aws logs tail /aws/lambda/AgentStack-*-OAuthProviderLambda* --follow
 ```
 
+**Issue:** OTEL traces not reaching Datadog (Secrets Manager permission)
+
+The agent runtime role needs `secretsmanager:GetSecretValue` on the Datadog API key secret (`datadog/aig-agent/api-key`) for OTEL traces to work. The CDK stack calls `grantRead` on the secret, but if the permission doesn't propagate on first deploy, attach the policy manually:
+
+```bash
+# Get the runtime role name from the stack
+ROLE_NAME=$(aws cloudformation describe-stack-resources \
+  --stack-name AgentStack-travel \
+  --query "StackResources[?ResourceType=='AWS::IAM::Role'].PhysicalResourceId" \
+  --output text | head -1)
+
+# Attach inline policy for Secrets Manager access
+aws iam put-role-policy \
+  --role-name $ROLE_NAME \
+  --policy-name DatadogSecretAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:*:*:secret:datadog/aig-agent/api-key-*"
+    }]
+  }'
+```
+
 ### Gateway Issues
 
 **Issue:** Gateway returns "An internal error occurred"

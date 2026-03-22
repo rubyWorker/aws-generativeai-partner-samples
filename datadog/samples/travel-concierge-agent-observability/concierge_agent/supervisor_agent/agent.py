@@ -2,6 +2,7 @@ import dd_init  # noqa: F401 - must be first import to configure OTEL TracerProv
 import os
 import logging
 import boto3
+from botocore.config import Config
 from strands import Agent
 from strands.models import BedrockModel
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -45,6 +46,8 @@ bedrock_model = BedrockModel(
     model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     region_name=REGION,
     temperature=0.1,
+    max_tokens=4096,
+    boto_client_config=Config(retries={"mode": "adaptive", "max_attempts": 5}),
 )
 
 

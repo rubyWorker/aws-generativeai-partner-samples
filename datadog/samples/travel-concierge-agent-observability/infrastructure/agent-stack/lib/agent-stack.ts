@@ -111,6 +111,7 @@ export class AgentStack extends cdk.Stack {
       USER_PROFILE_TABLE_NAME: userProfileTableName,
       ITINERARY_TABLE_NAME: itineraryTableName,
       FEEDBACK_TABLE_NAME: feedbackTableName,
+      AWS_REGION: this.region,
       DEPLOYMENT_ID: DEPLOYMENT_ID,
       DD_API_KEY_SECRET_ARN: ddApiKeySecret.secretArn,
       DD_SITE: 'datadoghq.com',
