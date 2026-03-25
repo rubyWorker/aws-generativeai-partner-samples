@@ -24,9 +24,7 @@ From the user's perspective, the system works as follows:
 4. The subagent or supervisor calls MCP tools through the AgentCore Gateway, which routes requests to the appropriate MCP server (Travel or Itinerary), each running as a containerized service in AgentCore Runtime
 5. The Travel MCP Server searches for flights, hotels, and activities via external APIs, while the Itinerary MCP Server manages user profiles and saved itineraries in DynamoDB
 6. Results flow back through the chain to the Web UI, where the user sees formatted travel options, itinerary suggestions, or booking confirmations
-7. Every step of this flow (LLM calls, tool invocations, subagent delegations) is instrumented with OpenTelemetry and exported directly to Datadog LLM Observability via OTLP over HTTPS, with AgentCore's built-in ADOT pipeline disabled (`DISABLE_ADOT_OBSERVABILITY=true`)
-
-For detailed Mermaid diagrams covering the distributed trace flow, span hierarchy, and OTEL collection pipeline, see [docs/architecture.md](docs/architecture.md).
+7. Every step of this flow (LLM calls, tool invocations, subagent delegations) is instrumented with OpenTelemetry and exported directly to Datadog LLM Observability via OTEL
 
 ### How the OTEL Integration Works
 
@@ -171,7 +169,7 @@ travel-concierge-agent-observability/
 ├── web-ui/                        # React frontend (Amplify)
 ├── amplify/                       # Amplify backend (DynamoDB, GraphQL, Cognito Identity Pool)
 ├── docs/
-│   ├── architecture.md            # Mermaid architecture diagrams
+│   ├── architecture_diagram.png   # System architecture diagram
 │   └── troubleshooting-guide.md   # 3 debugging scenarios with Datadog
 ├── PRD.md                         # Product requirements document
 ├── DEPLOYMENT.md                  # Detailed deployment guide
@@ -182,7 +180,6 @@ travel-concierge-agent-observability/
 
 | Document | Description |
 |----------|-------------|
-| **[Architecture](docs/architecture.md)** | Mermaid diagrams: system architecture, distributed trace flow, span hierarchy, OTEL collection |
 | **[Troubleshooting Guide](docs/troubleshooting-guide.md)** | Three scenarios: slow flight search, high token usage, agent error debugging |
 | **[Deployment Guide](DEPLOYMENT.md)** | Step-by-step deployment instructions, configuration, and cleanup |
 | **[PRD](PRD.md)** | Product requirements document for this observability sample |
