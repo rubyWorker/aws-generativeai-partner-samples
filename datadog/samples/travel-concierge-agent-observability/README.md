@@ -14,28 +14,21 @@ End-to-end observability for a multi-agent AI travel concierge, powered by [Data
 
 ## Architecture
 
-The system uses a supervisor pattern: a Strands Agent (Claude Sonnet 4.5) delegates to `travel_assistant` subagent, which invokes MCP tools via AgentCore Gateway connecting to MCP servers.
+![Architecture Diagram](docs/architecture_diagram.png)
 
-![Architecture Diagram](docs/architecture.md)
+From the user's perspective, the system works as follows:
 
-For the full architecture diagram with Mermaid diagrams, trace flow, and span hierarchy, see **[docs/architecture.md](docs/architecture.md)**.
+1. The user opens the React Web UI (served locally or via Amplify hosting) and types a travel request, such as "Find flights from NYC to Tokyo" or "Build me a 5-day itinerary for Paris"
+2. The Web UI authenticates using Cognito Identity Pool guest credentials and sends the request to AgentCore Runtime via SigV4-signed HTTPS
+3. The Supervisor Agent (a Strands Agent powered by Claude Sonnet 4.5) receives the request and decides how to handle it. For travel queries, it delegates to the `travel_assistant` subagent; for itinerary management, it invokes itinerary tools directly
+4. The subagent or supervisor calls MCP tools through the AgentCore Gateway, which routes requests to the appropriate MCP server (Travel or Itinerary), each running as a containerized service in AgentCore Runtime
+5. The Travel MCP Server searches for flights, hotels, and activities via external APIs, while the Itinerary MCP Server manages user profiles and saved itineraries in DynamoDB
+6. Results flow back through the chain to the Web UI, where the user sees formatted travel options, itinerary suggestions, or booking confirmations
+7. Every step of this flow (LLM calls, tool invocations, subagent delegations) is instrumented with OpenTelemetry and exported directly to Datadog LLM Observability via OTLP over HTTPS, with AgentCore's built-in ADOT pipeline disabled (`DISABLE_ADOT_OBSERVABILITY=true`)
 
-```
-User → Web UI → (SigV4 via Cognito guest creds) → AgentCore Runtime (Supervisor + OTEL TracerProvider)
-                                                          │
-                                                          ├── travel_assistant → AgentCore Gateway → Travel MCP Server (OTEL)
-                                                          └── itinerary tools  → AgentCore Gateway → Itinerary MCP Server (OTEL)
-                                                                                                           │
-                                                                                                     Amazon Bedrock
-                                                                                                    (Claude Sonnet 4.5)
-
-        DISABLE_ADOT_OBSERVABILITY=true  (AgentCore's built-in CloudWatch pipeline is off)
-        All services ──(OTLP over HTTPS)──→ Datadog LLM Observability
-```
+For detailed Mermaid diagrams covering the distributed trace flow, span hierarchy, and OTEL collection pipeline, see [docs/architecture.md](docs/architecture.md).
 
 ### How the OTEL Integration Works
-
-Following the pattern from [PR #1097](https://github.com/awslabs/amazon-bedrock-agentcore-samples/pull/1097):
 
 1. **`dd_init.py`** — Imported first in every Python entry point. Creates a custom OpenTelemetry `TracerProvider` with an `OTLPSpanExporter` that sends traces to `https://trace.agent.{DD_SITE}/v1/traces` with headers `dd-api-key` and `dd-otlp-source=llmobs`
 2. **`strands-agents[otel]`** — Installed in the supervisor agent, this makes Strands automatically emit OTEL-compliant spans following [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) when a `TracerProvider` is set

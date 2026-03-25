@@ -58,3 +58,6 @@ web-ui/.env.local
 *.backup
 OLD_amplify_outputs.json
 CERTs/
+
+# Generated diagrams
+docs/architecture_diagram.draw.io
