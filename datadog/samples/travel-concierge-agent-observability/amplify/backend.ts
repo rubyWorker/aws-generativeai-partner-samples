@@ -42,6 +42,10 @@ const unauthRole = new iam.Role(backend.stack, 'GuestUnauthRole', {
 });
 
 // Grant guest users permission to invoke AgentCore Runtime
+// SECURITY NOTE: resources: ['*'] is used because the AgentCore Runtime ARN is not
+// known until the agent-stack is deployed (circular dependency). For production,
+// scope this to the specific runtime ARN after deployment, e.g.:
+//   resources: [`arn:aws:bedrock-agentcore:${region}:${account}:runtime/${runtimeId}`]
 unauthRole.addToPolicy(new iam.PolicyStatement({
   actions: [
     'bedrock-agentcore:InvokeAgentRuntime',

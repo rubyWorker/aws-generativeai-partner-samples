@@ -10,14 +10,17 @@ const DEPLOYMENT_ID = deploymentConfig.deploymentId;
 
 export class ItineraryStack extends BaseMcpStack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    const itineraryTableName = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Data-ItineraryTableName`);
+    const userProfileTableName = cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Data-UserProfileTableName`);
+
     super(scope, id, {
       ...props,
       mcpName: 'itinerary',
       agentCodePath: 'concierge_agent/mcp_itinerary_tools',
       ssmParameters: [],
       environmentVariables: {
-        USER_PROFILE_TABLE_NAME: cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Data-UserProfileTableName`),
-        ITINERARY_TABLE_NAME: cdk.Fn.importValue(`ConciergeAgent-${DEPLOYMENT_ID}-Data-ItineraryTableName`)
+        USER_PROFILE_TABLE_NAME: userProfileTableName,
+        ITINERARY_TABLE_NAME: itineraryTableName
       },
       additionalPolicies: [
         new iam.PolicyStatement({
@@ -32,10 +35,10 @@ export class ItineraryStack extends BaseMcpStack {
             'dynamodb:Scan'
           ],
           resources: [
-            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*Itinerary*`,
-            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*Itinerary*/index/*`,
-            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*UserProfile*`,
-            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/*UserProfile*/index/*`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/${itineraryTableName}`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/${itineraryTableName}/index/*`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/${userProfileTableName}`,
+            `arn:aws:dynamodb:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:table/${userProfileTableName}/index/*`,
           ]
         })
       ]

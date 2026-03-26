@@ -53,7 +53,7 @@ def _configure_datadog_otel():
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.resources import Resource
 
         resource = Resource.create({"service.name": service_name})
@@ -62,8 +62,13 @@ def _configure_datadog_otel():
             headers={"dd-api-key": dd_api_key, "dd-otlp-source": "llmobs"},
         )
         provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
+
+        # Ensure spans are flushed on shutdown
+        import atexit
+        atexit.register(provider.shutdown)
+
         logger.info("Datadog LLM Observability configured (service: %s)", service_name)
     except Exception as e:
         logger.error("Failed to configure Datadog OTEL: %s", e)

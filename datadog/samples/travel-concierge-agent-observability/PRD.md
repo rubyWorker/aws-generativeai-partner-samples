@@ -15,7 +15,7 @@ Developers building agentic AI applications on Amazon Bedrock AgentCore lack pra
 
 ### Solution Summary
 
-Create a polished partner sample that forks the [AWS Bedrock AgentCore travel-concierge-agent](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/05-blueprints/travel-concierge-agent) and instruments it with Datadog's `ddtrace` library to enable:
+Create a polished partner sample that forks the [AWS Bedrock AgentCore travel-concierge-agent](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/05-blueprints/travel-concierge-agent) and instruments it with pure OpenTelemetry (OTEL) export to Datadog to enable:
 
 1. **LLM Observability** — End-to-end tracing of every LLM call (supervisor + subagents), capturing prompts, completions, token usage, latency, and errors
 2. **APM Distributed Tracing** — Service map showing supervisor_agent → travel_subagent → MCP gateway → Bedrock, with latency breakdown per span
