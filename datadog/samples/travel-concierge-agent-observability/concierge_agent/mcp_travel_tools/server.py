@@ -43,11 +43,7 @@ def get_ssm_parameter(parameter_name: str) -> str | None:
 def load_api_keys():
     """Load API keys from SSM and set as environment variables."""
     keys = {
-        "OPENWEATHER_API_KEY": "/concierge-agent/travel/openweather-api-key",
-        # "TAVILY_API_KEY": "/concierge-agent/travel/tavily-api-key",
         "SERP_API_KEY": "/concierge-agent/travel/serp-api-key",
-        # "AMADEUS_PUBLIC": "/concierge-agent/travel/amadeus-public",
-        # "AMADEUS_SECRET": "/concierge-agent/travel/amadeus-secret",
     }
 
     for env_var, ssm_param in keys.items():
@@ -67,28 +63,13 @@ load_api_keys()
 from tools import (  # noqa: E402
     serp_search_tool,
     serp_hotel_search,
-    # get_flight_offers,
     serp_flight_search,
-    # get_hotel_data,
 )
 
 
 # =============================================================================
 # MCP TOOLS - Raw tool exposure
 # =============================================================================
-
-# @mcp.tool()
-# def travel_get_weather(city: str) -> str:
-#     """
-#     Get 5-day weather forecast for a city.
-
-#     Args:
-#         city: City name (e.g., "Paris", "Tokyo", "New York")
-
-#     Returns:
-#         Weather forecast with daily temperatures and conditions.
-#     """
-#     return get_weather(city)
 
 
 @mcp.tool()
@@ -103,53 +84,6 @@ def travel_search(query: str) -> str:
         Search results with titles, snippets, and source URLs.
     """
     return serp_search_tool(query)
-
-
-# @mcp.tool()
-# def travel_get_flights(
-#     origin: str,
-#     destination: str,
-#     departure_date: str,
-#     adults: int = 1,
-#     max_price: int = 400,
-#     currency: str = "USD"
-# ) -> dict:
-#     """
-#     Search for flight offers between two cities.
-
-#     Args:
-#         origin: Origin airport IATA code (e.g., "BOS", "JFK", "LAX")
-#         destination: Destination airport IATA code (e.g., "PAR", "ROM", "TYO")
-#         departure_date: Departure date in YYYY-MM-DD format (e.g., "2025-12-25")
-#         adults: Number of adult passengers (default: 1)
-#         max_price: Maximum price filter (default: 400)
-#         currency: Currency code (default: "USD")
-
-#     Returns:
-#         Flight offers with pricing and schedule details.
-#     """
-#     return get_flight_offers(origin, destination, departure_date, adults, max_price, currency)
-
-
-# @mcp.tool()
-# def travel_get_hotels(
-#     city_code: str,
-#     ratings: str = "4,5",
-#     amenities: str = "AIR_CONDITIONING"
-# ) -> dict:
-#     """
-#     Search for hotels in a city.
-
-#     Args:
-#         city_code: City IATA code (e.g., "ROM", "NYC", "PAR", "MAD", "BOS")
-#         ratings: Hotel star ratings to filter (e.g., "3,4,5" for 3+ stars)
-#         amenities: Amenities filter. Options: SWIMMING_POOL, SPA, FITNESS_CENTER,
-#                    AIR_CONDITIONING, RESTAURANT, PARKING, PETS_ALLOWED, WIFI, etc.
-
-#     Returns:
-#         Hotel listings with names, ratings, and amenities.
-#     """
-#     return get_hotel_data(city_code, ratings, amenities)
 
 
 @mcp.tool()

@@ -262,6 +262,11 @@ export class GatewayConstruct extends Construct {
           supportedVersions: ['2025-03-26']
         }
       },
+      // SECURITY NOTE: authorizerType 'NONE' means the gateway has no request-level
+      // authorization. This is acceptable here because the gateway is only invoked by the
+      // supervisor agent's IAM-authenticated runtime (not exposed to end users directly).
+      // For production deployments with external callers, use 'CUSTOM' with a Lambda
+      // authorizer or restrict access via resource policies.
       authorizerType: 'NONE',
       description: 'AgentCore Gateway with MCP protocol'
     });

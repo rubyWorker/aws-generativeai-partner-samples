@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 app = BedrockAgentCoreApp(middleware=[])
 
-# Enable CORS for local development
-app.cors_allow_origins = ["http://localhost:3000", "http://localhost:5173"]
+# Enable CORS for local development (port 9000 matches web-ui vite.config.ts)
+app.cors_allow_origins = ["https://localhost:9000"]
 app.cors_allow_methods = ["GET", "POST", "OPTIONS"]
 app.cors_allow_headers = ["Content-Type", "Authorization"]
 

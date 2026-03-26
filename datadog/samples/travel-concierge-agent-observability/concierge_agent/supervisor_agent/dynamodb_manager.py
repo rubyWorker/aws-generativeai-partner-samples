@@ -28,7 +28,7 @@ class DynamoDBManager:
     def get_user_profile(self, user_id: str):
         """Get user profile from the UserProfile table."""
         try:
-            # First try to get by id (primary key)
+            # Look up by id (primary key)
             response = self.user_profile_table.get_item(Key={"id": user_id})
 
             if "Item" in response:
@@ -36,10 +36,13 @@ class DynamoDBManager:
                 logger.info(f"Retrieved user profile for: {user_id}")
                 return profile
 
-            # If not found by id, try scanning for userId field
+            # NOTE: Table scan is expensive at scale. If userId lookups are common,
+            # add a GSI on the userId attribute to avoid full-table scans.
+            logger.warning(f"Primary key miss for {user_id}, falling back to scan")
             response = self.user_profile_table.scan(
                 FilterExpression="userId = :user_id",
                 ExpressionAttributeValues={":user_id": user_id},
+                Limit=1,
             )
 
             items = response.get("Items", [])

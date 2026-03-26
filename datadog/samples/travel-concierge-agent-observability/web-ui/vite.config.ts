@@ -14,7 +14,9 @@ export default defineConfig({
     host: 'localhost',
     proxy: {
       '/api/agentcore': {
-        target: 'https://bedrock-agentcore.us-east-2.amazonaws.com',
+        // NOTE: Update this region to match your deployment region (AWS_REGION).
+        // The supervisor Dockerfile defaults to us-east-1.
+        target: 'https://bedrock-agentcore.us-east-1.amazonaws.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/agentcore/, ''),
       },
