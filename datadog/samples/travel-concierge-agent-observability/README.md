@@ -45,6 +45,7 @@ From the user's perspective, the system works as follows:
 | **Docker / Finch** | For building agent container images. If using Finch, set `export CDK_DOCKER=finch` before deploying |
 | **AWS CLI** | v2+ configured with credentials |
 | **jq** | `brew install jq` (macOS) or `apt-get install jq` (Linux) |
+| **SerpAPI Key** | Required for travel search tools. See [SerpAPI Key Setup](#serpapi-key-setup) |
 
 ### Datadog Secrets Setup
 
@@ -54,6 +55,31 @@ The Datadog API key must be stored in AWS Secrets Manager before deployment. The
 # Verify the secret exists
 aws secretsmanager describe-secret --secret-id datadog/aig-agent/api-key
 ```
+
+### SerpAPI Key Setup
+
+The Travel MCP Server's `travel_search`, `travel_hotel_search`, and `travel_flight_search` tools use [SerpAPI](https://serpapi.com/) to query Google Search, Google Hotels, and Google Flights.
+
+1. Sign up for a [SerpAPI account](https://serpapi.com/manage-api-key) and obtain an API key
+2. Store the key in AWS SSM Parameter Store:
+
+```bash
+aws ssm put-parameter \
+  --name "/concierge-agent/travel/serp-api-key" \
+  --value "YOUR_SERP_API_KEY" \
+  --type "SecureString" \
+  --region us-east-1
+```
+
+Alternatively, use the provided helper script which prompts for the key interactively:
+
+```bash
+./scripts/set-api-keys.sh
+```
+
+The Travel MCP Server loads this key from SSM at startup and sets it as the `SERP_API_KEY` environment variable.
+
+> **Note:** After setting or updating the key, redeploy the Travel MCP Server for the change to take effect: `npm run deploy:mcp`
 
 ## Quick Start
 
@@ -192,6 +218,38 @@ travel-concierge-agent-observability/
 | Supervisor Agent | `concierge_agent/supervisor_agent` | `supervisor-agent` | `strands-agents[otel]` emits OTEL GenAI spans; `OTLPSpanExporter` sends to Datadog |
 | Travel MCP Server | `concierge_agent/mcp_travel_tools` | `travel-mcp-server` | `OTLPSpanExporter` sends traces to Datadog (botocore, requests, MCP calls) |
 | Itinerary MCP Server | `concierge_agent/mcp_itinerary_tools` | `itinerary-mcp-server` | `OTLPSpanExporter` sends traces to Datadog (botocore/DynamoDB, MCP calls) |
+
+## Agent Tools
+
+The solution exposes tools across two MCP servers and one native Strands agent tool. The supervisor agent orchestrates all of them.
+
+### Native Agent Tool (Supervisor Agent)
+
+| Tool | Description |
+|------|-------------|
+| `travel_assistant` | Strands `@tool`-decorated async subagent that handles all travel planning queries. Delegates to a dedicated travel agent backed by its own Bedrock model and the Travel MCP tools. Accepts a query, user ID, and session ID; streams results back to the supervisor. |
+
+### Travel MCP Server (`mcp_travel_tools`)
+
+Exposed via AgentCore Gateway with the `traveltools___` prefix.
+
+| Tool | Description |
+|------|-------------|
+| `travel_search` | General internet search for travel information (destinations, restaurants, attractions, weather, travel tips) via SerpAPI. |
+| `travel_hotel_search` | Search for hotels via Google Hotels. Accepts a query, check-in date, and check-out date; returns ratings, prices, amenities, and booking links. |
+| `travel_flight_search` | Search for flights via Google Flights. Accepts departure/arrival airport codes and dates; returns prices, durations, layovers, and carbon emissions. |
+
+### Itinerary MCP Server (`mcp_itinerary_tools`)
+
+Exposed via AgentCore Gateway with the `itinerarytools___` prefix.
+
+| Tool | Description |
+|------|-------------|
+| `itinerary_get` | Retrieve the user's saved itinerary items (flights, hotels, activities) from DynamoDB. |
+| `itinerary_save` | Save a new item to the user's itinerary. Supports flights, hotels, activities, and restaurants with date, location, price, and time-of-day fields. |
+| `itinerary_remove` | Remove a single item from the user's itinerary by item ID. |
+| `itinerary_clear` | Clear all items from the user's itinerary. |
+| `itinerary_update_date` | Update the date for an existing itinerary item. |
 
 ## Key Dependencies
 
