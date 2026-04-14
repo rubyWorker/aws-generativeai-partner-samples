@@ -9,11 +9,7 @@ export class TravelStack extends BaseMcpStack {
       mcpName: 'travel',
       agentCodePath: 'concierge_agent/mcp_travel_tools',
       ssmParameters: [
-        '/concierge-agent/travel/openweather-api-key',
-        '/concierge-agent/travel/tavily-api-key',
-        '/concierge-agent/travel/serp-api-key',
-        '/concierge-agent/travel/amadeus-public',
-        '/concierge-agent/travel/amadeus-secret'
+        '/concierge-agent/travel/serp-api-key'
       ]
     });
   }

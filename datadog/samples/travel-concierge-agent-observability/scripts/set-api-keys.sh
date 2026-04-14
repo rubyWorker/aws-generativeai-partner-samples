@@ -8,18 +8,6 @@ REGION="us-east-1"
 echo "🔑 Setting API keys in AWS Systems Manager Parameter Store..."
 echo ""
 
-# OpenWeather API Key
-read -p "Enter OpenWeather API Key (or press Enter to skip): " OPENWEATHER_KEY
-if [ ! -z "$OPENWEATHER_KEY" ]; then
-  aws ssm put-parameter \
-    --name "/concierge-agent/travel/openweather-api-key" \
-    --value "$OPENWEATHER_KEY" \
-    --type "SecureString" \
-    --overwrite \
-    --region $REGION
-  echo "✅ OpenWeather API key set"
-fi
-
 # SERP API Key (Internet Search)
 read -p "Enter SERP API Key (or press Enter to skip): " SERP_KEY
 if [ ! -z "$SERP_KEY" ]; then
