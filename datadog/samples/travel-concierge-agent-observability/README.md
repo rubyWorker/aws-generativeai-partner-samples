@@ -1,5 +1,7 @@
 # Datadog LLM Observability for Amazon Bedrock AgentCore Travel Concierge Agent
 
+> **⚠️ Disclaimer: This solution is for testing and learning purposes only. It is NOT intended for production use. Do not input any real, personal, or sensitive data. All data used with this sample should be fictional or synthetic. Use at your own risk.**
+
 End-to-end observability for a multi-agent AI travel concierge, powered by [Datadog LLM Observability](https://docs.datadoghq.com/llm_observability/) and [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html).
 
 > **Note:** This sample is forked from the upstream [travel-concierge-agent](https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/05-blueprints/travel-concierge-agent) blueprint and adds Datadog observability using a pure OpenTelemetry approach — no Datadog Agent or `ddtrace` required.
@@ -270,4 +272,4 @@ See the [Deployment Guide — Clean Up](DEPLOYMENT.md#clean-up) for partial clea
 
 ---
 
-> **Disclaimer:** This project is provided as a sample implementation for educational and demonstration purposes. It is NOT production ready. Please ensure compliance with your organization's policies and AWS service terms.
+> **⚠️ Disclaimer:** This project is provided as a sample implementation strictly for educational, demonstration, and testing purposes. It is **NOT production ready** and must not be used in any production environment. Do not input any real, personal, confidential, or sensitive data. All data used with this sample should be fictional or synthetic. The authors assume no responsibility for any misuse or data loss. Please ensure compliance with your organization's policies and AWS service terms.
